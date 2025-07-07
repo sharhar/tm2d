@@ -12,3 +12,6 @@ build/
 .eggs/
 *.egg
 
+data/
+
+*.npy
