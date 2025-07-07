@@ -9,22 +9,6 @@ You can install the application using the command:
 pip3 install .
 ```
 
-## Running the program
-
-To run the template matcher, run the command:
-
-```
-tm2d [output prefix] [input reference image] [atomic coordinates]
-```
-
-To use Fourier Slicing rather than the TEM simulation stack, run the command:
-
-```
-tm2d [output prefix] [input reference image] [3D template file (either .npy or .mrc)] --slice=True
-```
-
-To disable the whitening filter, add the option `--whiten=False` to the end of the commands.
-
 ## Imaging model
 
 The projected potential $v_z(x,y)$ is modeled in one of two ways. It can be calculated from a slice through the Fourier transform of a density map (3D volume) or from a set of (3D) atomic coordinates. In the former case, different orientations are obtained by extracting different slices through the Fourier transform, while in the latter they are obtained by rotating the atomic coordinates, projecting along the $\hat{\mathbf{z}}$ (electron beam propagation) axis, and finally convolving the resulting 2D histogram of coordinates with a gaussian blur. The normalization of the gaussian kernel is set to approximately match a more rigorous calculation of the atomic projected potential in units of VÅ ([Kirkland 2020](https://doi.org/10.1007/978-3-030-33260-0)).

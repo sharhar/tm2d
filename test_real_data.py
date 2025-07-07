@@ -1,7 +1,6 @@
 import vkdispatch as vd
 import tm2d
 import numpy as np
-import eerfile
 
 import mrcfile
 

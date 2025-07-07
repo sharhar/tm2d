@@ -243,4 +243,4 @@ def get_orientations_healpix(angular_step_size: float, psi_step_size: float, reg
 
         return make_rotation_array_from_OOPA_and_region(out_of_plane_angles, psi_step_size, region, merge_out_and_in_plane)
     except ImportError:
-        raise ImportError("Healpy is required to use this function. Please install it using 'pip install healpy'.")
+        raise ImportError("Healpy is required to use this function. Please install it using 'pip install tm2d[healpy]'.")
