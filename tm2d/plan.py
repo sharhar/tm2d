@@ -4,24 +4,9 @@ import numpy as np
 import tqdm
 import numbers
 
-from typing import Union, List, Optional, Generator
+from typing import Union, List, Optional
 
-from .ctf import CTFParams, get_ctf_params_set
-
-def process_defocus_input(defocus_input: Union[float, List[float], np.ndarray, vc.Var[vc.v4]]) -> np.ndarray:
-    if isinstance(defocus_input, (numbers.Number, np.number)):
-        defocus_input = np.array([[defocus_input, 0.0, 0.0, 0.0]], dtype=np.float32)
-    
-    if isinstance(defocus_input, list):
-        defocus_input = np.array(defocus_input, dtype=np.float32)
-
-    if isinstance(defocus_input, np.ndarray):
-        if defocus_input.ndim == 1:
-            defocus_input = defocus_input.reshape(1, 4)
-
-        assert defocus_input.shape[1] == 4, "Defocus vector must be a 2D array with shape (N, 4)."
-    
-    return defocus_input
+from .ctf import CTFParams, CTFSet
 
 class Template:
     def __init__(self):
@@ -30,7 +15,6 @@ class Template:
     def _make_template(self,
                       rotations: Union[vc.Var[vc.m4], np.ndarray],
                       pixel_size: float,
-                      #defoci: List[Union[vc.Var[vc.v4], np.ndarray]],
                       ctf_params: CTFParams,
                       template_count: int = 1,
                       cmd_stream: vd.CommandStream = None,
@@ -44,7 +28,6 @@ class Template:
     def make_template(self,
                       rotations: Union[vc.Var[vc.m4], List[int], np.ndarray],
                       pixel_size: float,
-                      #*defoci: Union[vc.Var[vc.v4], float, List[float], np.ndarray],
                       ctf_params: CTFParams = None,
                       template_count: int = 1,
                       cmd_stream: vd.CommandStream = None,
@@ -54,7 +37,7 @@ class Template:
         """
 
         if ctf_params is None:
-            ctf_params = get_ctf_params_set('krios')
+            ctf_params = CTFParams()
         
         if isinstance(rotations, list):
             rotations = np.array(rotations, dtype=np.float32)
@@ -74,7 +57,6 @@ class Template:
         return self._make_template(
             rotations=rotations,
             pixel_size=pixel_size,
-            #defoci=[process_defocus_input(d) for d in defoci],
             ctf_params=ctf_params,
             template_count=template_count,
             cmd_stream=cmd_stream,
@@ -133,16 +115,13 @@ class Plan:
                  results: Results,
                  rotation: Optional[np.ndarray] = None,
                  pixel_size: Optional[float] = None,
-                 ctf_params: Union[CTFParams, str] = None,
+                 ctf_params: Optional[CTFParams] = None,
                  template_batch_size: int = 2):
 
         self.template_batch_size = template_batch_size
 
         if ctf_params is None:
-            ctf_params = get_ctf_params_set('krios')
-
-        if isinstance(ctf_params, str):
-            ctf_params = get_ctf_params_set(ctf_params)
+            ctf_params = CTFParams()
 
         self.template = template
         self.comparator = comparator
@@ -158,7 +137,6 @@ class Plan:
         self.template_buffer = self.template.make_template(
             self.cmd_stream.bind_var("rot_mat"),
             pixel_size,
-            #*[self.cmd_stream.bind_var(f"defocus{i}") for i in range(self.template_batch_size)],
             template_count=self.template_batch_size,
             cmd_stream=self.cmd_stream,
             ctf_params=ctf_params
@@ -181,25 +159,23 @@ class Plan:
 
     def run(self,
             rotations: np.ndarray,
-            ctf_params_dict: dict[str, np.ndarray],
+            ctf_set: CTFSet,
             enable_progress_bar: bool = False,
             batch_size: int = 32):
-
-        combinations_array, dynamic_fields = self.ctf_params.generate_iteration_information(ctf_params_dict)
         
         if enable_progress_bar:
-            status_bar = tqdm.tqdm(total=rotations.shape[0] * combinations_array.shape[0])
+            status_bar = tqdm.tqdm(total=rotations.shape[0] * ctf_set.get_length())
 
         rotations_array = np.zeros(shape=(batch_size, 3), dtype=np.float32)
         index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
         total_batch_size = self.template_batch_size * batch_size
         input_array = np.zeros(shape=(batch_size,), dtype=np.float32)
 
-        if combinations_array.shape[0] == 1 and self.template_batch_size > 1:
+        if ctf_set.get_length() == 1 and self.template_batch_size > 1:
             print("Warning: Only one ctf parameter combination provided, but template_batch_size is greater than 1. This will result in suboiptimal performance.")
 
-        for i in range(0, combinations_array.shape[0], total_batch_size):
-            param_count = min(total_batch_size, combinations_array.shape[0] - i)
+        for i in range(0, ctf_set.get_length(), total_batch_size):
+            param_count = min(total_batch_size, ctf_set.get_length() - i)
 
             ctf_batch_size = int(np.ceil(param_count / self.template_batch_size))
             rotations_batch_size = int(np.floor(batch_size / ctf_batch_size))
@@ -207,20 +183,20 @@ class Plan:
 
             for batch_id in range(self.template_batch_size):
                 start_index = i + batch_id * ctf_batch_size
-                end_index = min(start_index + ctf_batch_size, combinations_array.shape[0])
+                end_index = min(start_index + ctf_batch_size, ctf_set.get_length())
 
                 last_index = end_index - start_index
                 
-                for ii, field in enumerate(dynamic_fields):
-                    input_array[:last_index] = combinations_array[start_index:end_index, ii]
+                for ii, field in enumerate(ctf_set.field_names):
+                    input_array[:last_index] = ctf_set.combinations_array[start_index:end_index, ii]
 
-                    self.cmd_stream.set_var(f"{field.name}_{batch_id}", np.tile(input_array[:ctf_batch_size], rotations_batch_size))
+                    self.cmd_stream.set_var(f"{field}_{batch_id}", np.tile(input_array[:ctf_batch_size], rotations_batch_size))
 
                 index_arrays[batch_id][0:last_index] = np.arange(start_index, end_index)
-                index_arrays[batch_id][last_index:ctf_batch_size] = -combinations_array.shape[0] * rotations.shape[0]
+                index_arrays[batch_id][last_index:ctf_batch_size] = -ctf_set.get_length() * rotations.shape[0]
 
                 for j in range(1, rotations_batch_size):
-                    index_arrays[batch_id][ctf_batch_size*j:ctf_batch_size*(j+1)] = index_arrays[batch_id][:ctf_batch_size] + combinations_array.shape[0] * j
+                    index_arrays[batch_id][ctf_batch_size*j:ctf_batch_size*(j+1)] = index_arrays[batch_id][:ctf_batch_size] + ctf_set.get_length() * j
 
             for j in range(0, rotations.shape[0], rotations_batch_size):
                 actual_batch_size = min(rotations_batch_size, rotations.shape[0] - j)
@@ -233,14 +209,13 @@ class Plan:
                 )
 
                 for k in range(self.template_batch_size):
-                    self.cmd_stream.set_var(f"index{k}", index_arrays[k][:full_batch_size] + combinations_array.shape[0] * j)
+                    self.cmd_stream.set_var(f"index{k}", index_arrays[k][:full_batch_size] + ctf_set.get_length() * j)
 
                 # submit the command stream with the current batch size
                 self.cmd_stream.submit_any(full_batch_size)
 
                 if enable_progress_bar:
                     status_bar.update(param_count * rotations_batch_size)
-
 
         if enable_progress_bar:
             status_bar.close()

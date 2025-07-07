@@ -134,6 +134,18 @@ class ResultsPixel(Results):
             self.compile_results()
 
         return self.compiled_best_index_array
+    
+    def get_rotation_indicies(self, ctf_count: int):
+        if not self.compiled:
+            self.compile_results()
+        
+        return self.compiled_best_index_array // ctf_count
+
+    def get_ctf_indicies(self, ctf_count: int):
+        if not self.compiled:
+            self.compile_results()
+
+        return self.compiled_best_index_array % ctf_count
 
     def get_location_of_best_match(self):
         if not self.compiled:

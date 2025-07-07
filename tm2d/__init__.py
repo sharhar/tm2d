@@ -1,8 +1,7 @@
 from .micrograph import make_micrograph_signal_2d, StaticSignal2D
 
-from .ctf import make_ctf_params
 from .ctf import CTFParams
-from .ctf import get_ctf_params_set
+from .ctf import CTFSet
 from .ctf import ctf_filter
 from .ctf import generate_ctf
 

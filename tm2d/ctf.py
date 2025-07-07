@@ -7,36 +7,226 @@ import dataclasses
 import itertools
 import numpy as np
 
-from typing import Generator
-
 E_MASS = 0.511e6 # eV/c^2
 E_COMPTON = 2.42631e-2 # A
 ALPHA = 0.0072973525693
 HBAR = 1.0545718001e-34
 C_REL = 299792458
 
+def do_int_check(other):
+    return isinstance(other, int) or np.issubdtype(type(other), np.integer)
+
+@dataclasses.dataclass
+class CTFSet:
+    combinations_array: np.ndarray
+    field_names: list[str]
+    lengths: list[int]
+
+    def __init__(self):
+        raise TypeError("CTFSet is not meant to be instantiated directly. Use CTFParams.make_ctf_set() instead.")
+
+    @classmethod
+    def from_compiled_params(cls, combinations_array: np.ndarray, field_names: list[str], lengths: list[int]):
+        instance = cls.__new__(cls)
+
+        instance.combinations_array = combinations_array
+        instance.field_names = field_names
+        instance.lengths = lengths
+
+        return instance
+    
+    def get_length(self):
+        return self.combinations_array.shape[0]
+
+    def get_values_at_index(self, index: int):
+        return_dict = {}
+        for i, field_name in enumerate(self.field_names):
+            return_dict[field_name] = self.combinations_array[index, i]
+            
+        return return_dict
+    
 @dataclasses.dataclass
 class CTFParams:
-    HT: vd.float32
-    Cs: vd.float32
-    Cc: vd.float32
-    energy_spread_fwhm: vd.float32
-    beta: vd.float32
-    wlen: vd.float32
-    sigma_beta: vd.float32
-    sigma_s: vd.float32
-    sigma_f: vd.float32
-    johnson_std: vd.float32
-    B: vd.float32
-    amp_contrast: vd.float32
-    zernike: vd.float32
-    lpp: vd.float32
-    NA: vd.float32
-    f_OL: vd.float32
-    lpp_rot: vd.float32
-    defocus: vd.float32
-    A_mag: vd.float32
-    A_ang: vd.float32
+    HT: float
+    Cs: float
+    Cc: float
+    energy_spread_fwhm: float
+    accel_voltage_std: float
+    OL_current_std: float
+    beam_semiangle: float
+    johnson_std: float
+    B: float
+    amp_contrast: float
+    zernike: float
+    lpp: float
+    NA: float
+    f_OL: float
+    lpp_rot: float
+    defocus: float
+    A_mag: float
+    A_ang: float
+
+    def __init__(self,
+                HT: float = 300e3,
+                Cs: float = 2.7e7,
+                Cc: float = 2.7e7,
+                energy_spread_fwhm: float = 0.3,
+                accel_voltage_std: float = 0.07e-6,
+                OL_current_std: float = 0.1e-6,
+                beam_semiangle: float = 2.5e-6,
+                johnson_std: float = 0,
+                B: float = 0,
+                amp_contrast: float = 0.07,
+                zernike: float = 0,
+                lpp: float = 0,
+                NA: float = 0.05,
+                f_OL: float = 20e7,
+                lpp_rot: float = 0,
+                defocus: float = 10000,
+                A_mag: float = 0,
+                A_ang: float = 0):
+        
+        self.HT = HT
+        self.Cs = Cs
+        self.Cc = Cc
+        self.energy_spread_fwhm = energy_spread_fwhm
+        self.accel_voltage_std = accel_voltage_std
+        self.OL_current_std = OL_current_std
+        self.beam_semiangle = beam_semiangle
+        self.johnson_std = johnson_std
+        self.B = B
+        self.amp_contrast = amp_contrast
+        self.zernike = zernike
+        self.lpp = lpp
+        self.NA = NA
+        self.f_OL = f_OL
+        self.lpp_rot = lpp_rot
+        self.defocus = defocus
+        self.A_mag = A_mag
+        self.A_ang = A_ang
+
+    @classmethod
+    def like_titan(cls,
+                    HT: float = 300e3,
+                    Cs: float = 4.8e7,
+                    Cc: float = 7.6e7,
+                    energy_spread_fwhm: float = 0.9,
+                    accel_voltage_std: float = 0.07e-6,
+                    OL_current_std: float = 0.1e-6,
+                    beam_semiangle: float = 2.5e-6,
+                    johnson_std: float = 0.37,
+                    B: float = 0,
+                    amp_contrast: float = 0.07,
+                    zernike: float = 0,
+                    lpp: float = 90,
+                    NA: float = 0.05,
+                    f_OL: float = 20e7,
+                    lpp_rot: float = 18,
+                    defocus: float = 10000,
+                    A_mag: float = 0,
+                    A_ang: float = 0):
+        return cls(
+            HT=HT,
+            Cs=Cs,
+            Cc=Cc,
+            energy_spread_fwhm=energy_spread_fwhm,
+            accel_voltage_std=accel_voltage_std,
+            OL_current_std=OL_current_std,
+            beam_semiangle=beam_semiangle,
+            johnson_std=johnson_std,
+            B=B,
+            amp_contrast=amp_contrast,
+            zernike=zernike,
+            lpp=lpp,
+            NA=NA,
+            f_OL=f_OL,
+            lpp_rot=lpp_rot,
+            defocus=defocus,
+            A_mag=A_mag,
+            A_ang=A_ang
+        )
+    
+    @classmethod
+    def like_theia(cls,
+                    HT: float = 300e3,
+                    Cs: float = 0,
+                    Cc: float = 5.1e7,
+                    energy_spread_fwhm: float = 0.3,
+                    accel_voltage_std: float = 0.07e-6,
+                    OL_current_std: float = 0.1e-6,
+                    beam_semiangle: float = 2.5e-6,
+                    johnson_std: float = 0.33,
+                    B: float = 0,
+                    amp_contrast: float = 0.07,
+                    zernike: float = 0,
+                    lpp: float = 90,
+                    NA: float = 0.05,
+                    f_OL: float = 14.1e7,
+                    lpp_rot: float = 18,
+                    defocus: float = 10000,
+                    A_mag: float = 0,
+                    A_ang: float = 0):
+        return cls(
+            HT=HT,
+            Cs=Cs,
+            Cc=Cc,
+            energy_spread_fwhm=energy_spread_fwhm,
+            accel_voltage_std=accel_voltage_std,
+            OL_current_std=OL_current_std,
+            beam_semiangle=beam_semiangle,
+            johnson_std=johnson_std,
+            B=B,
+            amp_contrast=amp_contrast,
+            zernike=zernike,
+            lpp=lpp,
+            NA=NA,
+            f_OL=f_OL,
+            lpp_rot=lpp_rot,
+            defocus=defocus,
+            A_mag=A_mag,
+            A_ang=A_ang
+        )
+
+    @classmethod
+    def like_krios(cls,
+                    HT: float = 300e3,
+                    Cs: float = 2.7e7,
+                    Cc: float = 2.7e7,
+                    energy_spread_fwhm: float = 0.3,
+                    accel_voltage_std: float = 0.07e-6,
+                    OL_current_std: float = 0.1e-6,
+                    beam_semiangle: float = 2.5e-6,
+                    johnson_std: float = 0,
+                    B: float = 0,
+                    amp_contrast: float = 0.07,
+                    zernike: float = 0,
+                    lpp: float = 0,
+                    NA: float = 0.05,
+                    f_OL: float = 20e7,
+                    lpp_rot: float = 0,
+                    defocus: float = 10000,
+                    A_mag: float = 0,
+                    A_ang: float = 0):
+        return cls(
+            HT=HT,
+            Cs=Cs,
+            Cc=Cc,
+            energy_spread_fwhm=energy_spread_fwhm,
+            accel_voltage_std=accel_voltage_std,
+            OL_current_std=OL_current_std,
+            beam_semiangle=beam_semiangle,
+            johnson_std=johnson_std,
+            B=B,
+            amp_contrast=amp_contrast,
+            zernike=zernike,
+            lpp=lpp,
+            NA=NA,
+            f_OL=f_OL,
+            lpp_rot=lpp_rot,
+            defocus=defocus,
+            A_mag=A_mag,
+            A_ang=A_ang
+        )
 
     def get_type_list(self):
         fields = dataclasses.fields(self)
@@ -73,7 +263,7 @@ class CTFParams:
             
         return result
 
-    def generate_iteration_information(self, values_dict: dict[str, np.ndarray]):
+    def make_ctf_set(self, **values_dict) -> CTFSet:
         fields = dataclasses.fields(self)
 
         dynamic_fields = [field for field in fields if self.__getattribute__(field.name) is None]
@@ -88,167 +278,46 @@ class CTFParams:
         for dyn_val, field in zip(dynamic_values, dynamic_fields):
             assert dyn_val.ndim == 1, f"Dynamic value for field {field.name} must be a 1D array, got {dyn_val.ndim}D array."
 
-        #print(dynamic_values)
-        #grid = np.meshgrid(*dynamic_values)
-        #print(f"Grid shape: {grid}")
-        #combinations_array = np.vstack([g.ravel() for g in grid]).T
-
         combinations = list(itertools.product(*dynamic_values))
         combinations_array = np.array(combinations)
 
-        return combinations_array, dynamic_fields
-        
-    def get_values_at_index(self, values_dict: dict[str, np.ndarray], index: int):
-        lengths = [len(values_dict[field.name]) for field in dataclasses.fields(self) if self.__getattribute__(field.name) is None]
-
-        individual_indices = [0] * len(lengths)
-        current_index = index
-        
-        # Iterate from the last array to the first
-        for i in range(len(lengths) - 1, -1, -1):
-            individual_indices[i] = current_index % lengths[i]
-            current_index //= lengths[i]
-
-        return_dict = {}
-        field_index = 0
-        for field in dataclasses.fields(self):
-            if self.__getattribute__(field.name) is None:
-                return_dict[field.name] = values_dict[field.name][individual_indices[field_index]]
-                field_index += 1
-            
-        return return_dict
-
-def make_ctf_params(
-        HT: float = 300e3,
-        Cs: float = 2.7e7,
-        Cc: float = 2.7e7,
-        energy_spread_fwhm: float = 0.3,
-        accel_voltage_std: float = 0.07e-6,
-        OL_current_std: float = 0.1e-6,
-        beam_semiangle: float = 2.5e-6,
-        johnson_std: float = 0.33,
-        B: float = 0,
-        amp_contrast: float = 0.07,
-        zernike: float = 0,
-        lpp: float = 0,
-        NA: float = 0.05,
-        f_OL: float = 20e7,
-        lpp_rot: float = 0,
-        defocus: float = None,
-        A_mag: float = 0,
-        A_ang: float = 0
-    ) -> CTFParams:
-
-    gamma_lorentz = 1 + HT/E_MASS
-    beta = np.sqrt(1 - 1/(gamma_lorentz*gamma_lorentz))
-    
-    epsilon = gamma_lorentz/(1 + HT/(2*E_MASS))
-
-    temp1 = epsilon*energy_spread_fwhm/HT/(2 * np.sqrt(2 * np.log(2)))
-    temp2 = epsilon*accel_voltage_std
-    
-    params = CTFParams(
-        HT=HT,
-        Cs=Cs,
-        Cc=Cc,
-        energy_spread_fwhm=energy_spread_fwhm,
-        beta=beta,
-        wlen=E_COMPTON / (gamma_lorentz * beta),
-        sigma_beta=beam_semiangle,
-        sigma_s=beam_semiangle/(E_COMPTON / (gamma_lorentz * beta)),
-        sigma_f=Cc*np.sqrt(temp1*temp1 + temp2*temp2 + 4*OL_current_std*OL_current_std),
-        johnson_std=johnson_std,
-        B=B,
-        amp_contrast=amp_contrast,
-        zernike=zernike,
-        lpp=lpp,
-        NA=NA,
-        f_OL=f_OL,
-        lpp_rot=lpp_rot,
-        defocus=defocus,
-        A_mag=A_mag,
-        A_ang=A_ang
-    )
-
-    return params
-
-def get_ctf_params_set(microscope_name: str) -> CTFParams:
-    if microscope_name == 'titan':
-        ctf_params = make_ctf_params(
-            HT = 300e3,
-            Cs = 4.8e7,
-            Cc = 7.6e7,
-            energy_spread_fwhm = 0.9,
-            accel_voltage_std = 0.07e-6,
-            OL_current_std = 0.1e-6,
-            beam_semiangle = 2.5e-6,
-            johnson_std = 0.37,
-            B = 0,
-            amp_contrast = 0.07,
-            lpp = 90,
-            NA = 0.05,
-            f_OL = 20e7,
-            lpp_rot = 18
+        return CTFSet.from_compiled_params(
+            combinations_array=combinations_array,
+            field_names=[field.name for field in dynamic_fields],
+            lengths=[len(values_dict[field.name]) for field in dynamic_fields]
         )
-
-    elif microscope_name == 'theia':
-        ctf_params = make_ctf_params(
-            HT = 300e3,
-            Cs = 0,
-            Cc = 5.1e7,
-            energy_spread_fwhm = 0.3,
-            accel_voltage_std = 0.07e-6,
-            OL_current_std = 0.1e-6,
-            beam_semiangle = 2.5e-6,
-            johnson_std = 0.33,
-            B = 0,
-            amp_contrast = 0.07,
-            lpp = 90,
-            NA = 0.05,
-            f_OL = 14.1e7,
-            lpp_rot = 18
-        )
-
-    elif microscope_name == 'krios':
-        ctf_params = make_ctf_params(
-            HT = 300e3,
-            Cs = 2.7e7,
-            Cc = 2.7e7,
-            energy_spread_fwhm = 0.3,
-            accel_voltage_std = 0.07e-6,
-            OL_current_std = 0.1e-6,
-            beam_semiangle = 2.5e-6,
-            johnson_std = 0,
-            B = 0,
-            amp_contrast = 0.07,
-            lpp = 0,
-        )
-
-    return ctf_params
 
 def ctf_filter(
         buffer_shape: tuple[int, int],
-        #defocus_vars: Var[v4],
         pos_2d: vc.ShaderVariable,
         params: CTFParams,
         pixel_size: float,
         disable_B_factor: bool = False):
-    wlen = params.wlen # [A]
+    
+    gamma_lorentz = 1 + params.HT/E_MASS
+    beta = vc.sqrt(1 - 1/(gamma_lorentz*gamma_lorentz))
+    
+    epsilon = gamma_lorentz/(1 + params.HT/(2*E_MASS))
+
+    temp1 = epsilon*params.energy_spread_fwhm/( params.HT * (2 * np.sqrt(2 * np.log(2))) )
+    temp2 = epsilon*params.accel_voltage_std
+
+    wlen = E_COMPTON / (gamma_lorentz * beta) # wavelength in Angstroms
+    sigma_f = params.Cc*vc.sqrt(temp1*temp1 + temp2*temp2 + 4*params.OL_current_std*params.OL_current_std)
+    
     Cs = params.Cs # [A]
-    sigma_beta = params.sigma_beta # [rad]
+    sigma_beta = params.beam_semiangle # [rad]
     johnson_std = params.johnson_std # [A]
-    sigma_f = params.sigma_f # [A]
     amp_contrast = params.amp_contrast # [dimensionless]
     zernike = params.zernike # [deg]
     lpp = params.lpp # [deg]
-    # lpp = defocus_vars.w # [deg] laser phase shift
     NA = params.NA # [dimensionless]
     f_OL = params.f_OL # [A]
     lpp_rot = params.lpp_rot # [deg]
     
     lpp_rot_rad = np.pi / 180 * lpp_rot # [rad]
-    A2_mag = params.A_mag #params[ctf_params_index_table["A2_mag"]] # [A]
-    A2_ang = params.A_ang #params[ctf_params_index_table["A2_ang"]] # [deg]
+    A2_mag = params.A_mag # [A]
+    A2_ang = params.A_ang # [deg]
     A2_ang_rad = np.pi / 180 * A2_ang # [rad]
 
     wave_shape = vc.new_uvec2()

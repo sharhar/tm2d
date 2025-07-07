@@ -8,7 +8,7 @@ from ..plan import Template
 
 from typing import Tuple
 
-from ..ctf import CTFParams, get_ctf_params_set
+from ..ctf import CTFParams
 
 def simulate_pdf(
         template: Template,
@@ -22,10 +22,7 @@ def simulate_pdf(
     """
 
     if ctf_params is None:
-        ctf_params = get_ctf_params_set('krios')
-
-    if isinstance(ctf_params, str):
-        ctf_params = get_ctf_params_set(ctf_params)
+        ctf_params = CTFParams()
     
     return template.make_template(
         template.get_rotation_matricies(np.array([rotation])),
