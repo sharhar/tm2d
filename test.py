@@ -2,6 +2,8 @@ import vkdispatch as vd
 import tm2d
 import numpy as np
 
+import sys
+
 import tm2d.utilities as tu
 
 from matplotlib import pyplot as plt
@@ -25,8 +27,8 @@ medium_region = tm2d.OrientationRegion(
         phi_max=200, # Default is 360
         theta_min=70, # Default is 0 
         theta_max=100, # Default is 180
-        #psi_min=300, # Default is 0
-        #psi_max=340 # Default is 360
+        psi_min=300, # Default is 0
+        psi_max=340 # Default is 360
     )
 
 big_region = tm2d.OrientationRegion(
@@ -41,6 +43,8 @@ big_region = tm2d.OrientationRegion(
 
 # A copy of the data folder can be found at:
 # /BigData/Workspaces/shahar/data
+
+output_dir = sys.argv[1]
 
 template_atomic = tm2d.TemplateAtomic(
     (512, 512),
@@ -62,7 +66,8 @@ results = tm2d.ResultsPixel(data_array.shape)
 
 params = tm2d.CTFParams.like_krios(
     defocus = None,
-    B = None
+    B = 27.5,
+    #Cs = None
 )
 
 plan = tm2d.Plan(
@@ -80,12 +85,13 @@ plan.set_data(data_array)
 rotations = tm2d.get_orientations_cube( # Get (phi, theta, psi) angles with cube sampling
     angular_step_size=2, # out of plane rotation step size
     psi_step_size=1, # in plane rotation step size
-    region=small_region
+    region=small_region # region of interest for the orientations
 )
 
 ctf_set = params.make_ctf_set(
-    defocus = np.arange(10000, 14000, 10),
-    B = np.arange(0, 500, 2.5),
+    defocus = np.arange(12000, 13000, 25),
+    #Cs = np.arange(0, 5e7, 1e6),
+    #B = np.arange(0, 500, 2.5),
 )
 
 plan.run(
@@ -98,8 +104,8 @@ best_rotations = rotations[results.get_rotation_indicies(ctf_set.get_length())]
 best_ctf_values = ctf_set.get_values_at_index(results.get_ctf_indicies(ctf_set.get_length()))
 
 for i in range(results.count):
-    np.save(f"mip{i}.npy", results.get_mip()[i])
-    np.save(f"Z_score{i}.npy", results.get_z_score()[i])
+    np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
+    np.save(f"{output_dir}/Z_score{i}.npy", results.get_z_score()[i])
 
     print(f"Micrograph {i + 1}:")
     print(f"\tMax cross-correlation: {results.get_mip()[i][results.get_location_of_best_match()[i]]}")
@@ -113,9 +119,9 @@ for i in range(results.count):
     #print(results.get_rotation_indicies(ctf_set.get_length()).shape)
     #print(best_rotations.shape)
 
-    np.save(f"phi_{i + 1}.npy", best_rotations[i, :, :, 0])
-    np.save(f"theta_{i + 1}.npy", best_rotations[i, :, :, 1])
-    np.save(f"psi_{i + 1}.npy", best_rotations[i, :, :, 2])
+    np.save(f"{output_dir}/phi_{i + 1}.npy", best_rotations[i, :, :, 0])
+    np.save(f"{output_dir}/theta_{i + 1}.npy", best_rotations[i, :, :, 1])
+    np.save(f"{output_dir}/psi_{i + 1}.npy", best_rotations[i, :, :, 2])
 
     for k, v in best_ctf_values.items():
-        np.save(f"{k}_{i + 1}.npy", v[i])
+        np.save(f"{output_dir}/{k}_{i + 1}.npy", v[i])
