@@ -110,13 +110,13 @@ class TemplateAtomic(Template):
         pixel_size_type: type = vc.Const[vd.float32] if isinstance(pixel_size, float) else vc.Var[vd.float32]
         
         @vd.shader(exec_size=lambda args: args.atom_coords.shape[0])
-        def place_atoms(image: Buff[i32], atom_coords: Buff[f32], rot_matrix: rotation_type, pixel_size: pixel_size_type): # type: ignore
+        def place_atoms(image: Buff[i32], atom_coords: Buff[f32], rot_matrix: rotation_type, my_pixel_size: pixel_size_type): # type: ignore
             ind = vc.global_invocation().x.copy()
 
             pos = vc.new_vec4()
-            pos.x = -atom_coords[3*ind + 1] / pixel_size
-            pos.y = atom_coords[3*ind + 0] / pixel_size
-            pos.z = atom_coords[3*ind + 2] / pixel_size
+            pos.x = -atom_coords[3*ind + 1] / my_pixel_size
+            pos.y = atom_coords[3*ind + 0] / my_pixel_size
+            pos.z = atom_coords[3*ind + 2] / my_pixel_size
             pos.w = 1
 
             pos[:] = rot_matrix * pos
@@ -151,14 +151,16 @@ class TemplateAtomic(Template):
             input_map=map_int_to_float
         )
 
-        def ctf_map_func(*ctf_vars: Var):
+        def ctf_map_func(*in_args: Var):
             tid = vc.mapping_index()
             value = vc.mapping_registers()[0]
+
+            my_pixel_size = in_args[0]
             
             value[:] = value * gaussian_filter(
                 template_buffer.shape[1:],
                 tid,
-                pixel_size
+                my_pixel_size
             )
 
             if disable_ctf:
@@ -169,17 +171,16 @@ class TemplateAtomic(Template):
             pos_2d.y = ((tid / template_buffer.shape[2]) + template_buffer.shape[1] // 2) % template_buffer.shape[1]
             pos_2d.y = pos_2d.y - template_buffer.shape[1] // 2
 
-            ctf_param_list = ctf_params.assemble_params_list_from_args(ctf_vars, template_count)
+            ctf_param_list = ctf_params.assemble_params_list_from_args(in_args[1:], template_count)
 
             value[:] = ctf_filter(
                 template_buffer.shape[1:],
-                #defoci_vars[vc.kernel_index()],
                 pos_2d,
                 ctf_param_list[vc.kernel_index()],
-                pixel_size
+                my_pixel_size
             ) * value
 
-        ctf_map = vd.map(ctf_map_func, register_types=[c64], input_types=ctf_params.get_type_list() * template_count) #[Var[v4]] * len(defoci))
+        ctf_map = vd.map(ctf_map_func, register_types=[c64], input_types = [pixel_size_type] + ctf_params.get_type_list() * template_count)
 
         @vd.map_registers([c64])
         def output_map_func(output_buffer: vc.Buffer[c64]):
@@ -189,7 +190,7 @@ class TemplateAtomic(Template):
         vd.fft.convolve(
             template_buffer,
             template_buffer,
-            #*defoci,
+            pixel_size,
             *ctf_params.get_args(cmd_stream, template_count),
             kernel_map=ctf_map,
             axis=1,
@@ -203,7 +204,7 @@ class TemplateAtomic(Template):
 
         return template_buffer
     
-    def get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
+    def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
         return make_atomic_template_rotation_matrix(rotations).astype(np.float32)
     
     def get_shape(self) -> tuple:

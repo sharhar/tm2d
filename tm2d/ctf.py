@@ -37,6 +37,32 @@ class CTFSet:
     
     def get_length(self):
         return self.combinations_array.shape[0]
+    
+    def set_ctf_batch(self,
+                      index_arrays: list[np.ndarray],
+                      input_array: np.ndarray,
+                      cmd_stream: vd.CommandStream,
+                      ctf_batch_size: int,
+                      rotations_pixels_batch_size: int,
+                      rotations_pixels_count: int,
+                      template_count: int,
+                      ctf_index: int):
+        for batch_id in range(template_count):
+            start_index = ctf_index + batch_id * ctf_batch_size
+            end_index = min(start_index + ctf_batch_size, self.get_length())
+
+            last_index = end_index - start_index
+            
+            for ii, field in enumerate(self.field_names):
+                input_array[:last_index] = self.combinations_array[start_index:end_index, ii]
+
+                cmd_stream.set_var(f"{field}_{batch_id}", np.tile(input_array[:ctf_batch_size], rotations_pixels_batch_size))
+
+            index_arrays[batch_id][0:last_index] = np.arange(start_index, end_index)
+            index_arrays[batch_id][last_index:ctf_batch_size] = -self.get_length() * rotations_pixels_count
+
+            for j in range(1, rotations_pixels_batch_size):
+                index_arrays[batch_id][ctf_batch_size*j:ctf_batch_size*(j+1)] = index_arrays[batch_id][:ctf_batch_size] + self.get_length() * j
 
     def get_values_at_index(self, index: int):
         return_dict = {}

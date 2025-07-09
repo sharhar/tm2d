@@ -4,7 +4,7 @@ import numpy as np
 import tqdm
 import numbers
 
-from typing import Union, List, Optional
+from typing import Union, List, Tuple, Optional
 
 from .ctf import CTFParams, CTFSet
 
@@ -63,8 +63,17 @@ class Template:
             disable_ctf=disable_ctf
         )
     
-    def get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
+    def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
         raise NotImplementedError("get_rotation_matricies must be implemented in a subclass.")
+    
+    def get_rotation_matricies(self, rotations: Union[np.ndarray, Tuple[float, float, float]]) -> np.ndarray:
+        if not isinstance(rotations, np.ndarray):
+            rotations = np.array(rotations, dtype=np.float32).reshape(1, 3)
+        
+        if rotations.ndim == 1:
+            rotations = rotations.reshape(1, 3)
+
+        return self._get_rotation_matricies(rotations)
     
     def get_shape(self) -> tuple:
         """
@@ -135,8 +144,8 @@ class Plan:
         prev_stream = vd.set_global_cmd_stream(self.cmd_stream)
 
         self.template_buffer = self.template.make_template(
-            self.cmd_stream.bind_var("rot_mat"),
-            pixel_size,
+            self.cmd_stream.bind_var("rotation_matrix") if self.rotation is None else self.template.get_rotation_matricies(self.rotation),
+            self.cmd_stream.bind_var("pixel_size") if self.pixel_size is None else self.pixel_size,
             template_count=self.template_batch_size,
             cmd_stream=self.cmd_stream,
             ctf_params=ctf_params
@@ -158,64 +167,118 @@ class Plan:
         self.results.reset()
 
     def run(self,
-            rotations: np.ndarray,
             ctf_set: CTFSet,
+            rotations: Optional[np.ndarray] = None,
+            pixel_sizes: Optional[Union[np.ndarray]] = None,
             enable_progress_bar: bool = False,
             batch_size: int = 32):
+        if rotations is None:
+            assert self.rotation is not None, "If rotations are not provided, the rotation attribute must be set."
         
-        if enable_progress_bar:
-            status_bar = tqdm.tqdm(total=rotations.shape[0] * ctf_set.get_length())
+        if pixel_sizes is None:
+            assert self.pixel_size is not None, "If pixel sizes are not provided, the pixel_size attribute must be set."
+
+        rotation_count = 1 if rotations is None else rotations.shape[0]
+        pixel_size_count = 1 if pixel_sizes is None else pixel_sizes.shape[0]
 
         rotations_array = np.zeros(shape=(batch_size, 3), dtype=np.float32)
+        pixel_sizes_array = np.zeros(shape=(batch_size,), dtype=np.float32)
+        ctf_index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
         index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
-        total_batch_size = self.template_batch_size * batch_size
+        
+        max_batch_size = self.template_batch_size * batch_size
         input_array = np.zeros(shape=(batch_size,), dtype=np.float32)
 
         if ctf_set.get_length() == 1 and self.template_batch_size > 1:
             print("Warning: Only one ctf parameter combination provided, but template_batch_size is greater than 1. This will result in suboiptimal performance.")
 
-        for i in range(0, ctf_set.get_length(), total_batch_size):
-            param_count = min(total_batch_size, ctf_set.get_length() - i)
+        if enable_progress_bar:
+            status_bar = tqdm.tqdm(total=rotation_count * pixel_size_count * ctf_set.get_length())
+        
+        for i in range(0, ctf_set.get_length(), max_batch_size):
 
-            ctf_batch_size = int(np.ceil(param_count / self.template_batch_size))
-            rotations_batch_size = int(np.floor(batch_size / ctf_batch_size))
-            full_batch_size = ctf_batch_size * rotations_batch_size
+            ctf_count = min(max_batch_size, ctf_set.get_length() - i)
+            ctf_batch_size = int(np.ceil(ctf_count / self.template_batch_size))
+            rotations_pixels_batch_size = int(np.floor(batch_size / ctf_batch_size))
 
-            for batch_id in range(self.template_batch_size):
-                start_index = i + batch_id * ctf_batch_size
-                end_index = min(start_index + ctf_batch_size, ctf_set.get_length())
+            #otations_batch_size = min(rotations_pixels_batch_size, rotation_count)
+            #pixel_batch_size = rotations_pixels_batch_size // rotations_batch_size
 
-                last_index = end_index - start_index
-                
-                for ii, field in enumerate(ctf_set.field_names):
-                    input_array[:last_index] = ctf_set.combinations_array[start_index:end_index, ii]
+            rotations_batch_size = rotations_pixels_batch_size
+            pixel_batch_size = 1
 
-                    self.cmd_stream.set_var(f"{field}_{batch_id}", np.tile(input_array[:ctf_batch_size], rotations_batch_size))
+            if rotation_count == 1:
+                rotations_batch_size = 1
+                pixel_batch_size = rotations_pixels_batch_size
 
-                index_arrays[batch_id][0:last_index] = np.arange(start_index, end_index)
-                index_arrays[batch_id][last_index:ctf_batch_size] = -ctf_set.get_length() * rotations.shape[0]
+            full_batch_size = ctf_batch_size * rotations_batch_size * pixel_batch_size
 
-                for j in range(1, rotations_batch_size):
-                    index_arrays[batch_id][ctf_batch_size*j:ctf_batch_size*(j+1)] = index_arrays[batch_id][:ctf_batch_size] + ctf_set.get_length() * j
+            ctf_set.set_ctf_batch(
+                ctf_index_arrays,
+                input_array,
+                self.cmd_stream,
+                ctf_batch_size,
+                rotations_pixels_batch_size,
+                rotation_count * pixel_size_count,
+                self.template_batch_size,
+                i
+            )
 
-            for j in range(0, rotations.shape[0], rotations_batch_size):
-                actual_batch_size = min(rotations_batch_size, rotations.shape[0] - j)
+            for pixel_size_index in range(0, pixel_size_count, pixel_batch_size):
+                actual_pixel_batch_size = min(pixel_batch_size, pixel_size_count - pixel_size_index)
 
-                rotations_array[:actual_batch_size * ctf_batch_size] = np.repeat(rotations[j:j + actual_batch_size, :], repeats=ctf_batch_size, axis=0)
+                if self.pixel_size is None:
+                    pixel_sizes_array[:actual_pixel_batch_size * ctf_batch_size] = np.repeat(
+                        pixel_sizes[pixel_size_index:pixel_size_index + actual_pixel_batch_size],
+                        repeats=ctf_batch_size,
+                        axis=0
+                    )
 
-                self.cmd_stream.set_var(
-                    "rot_mat", 
-                    self.template.get_rotation_matricies(rotations_array[:full_batch_size, :])
-                )
+                    pixel_batch_width = pixel_batch_size * ctf_batch_size
 
-                for k in range(self.template_batch_size):
-                    self.cmd_stream.set_var(f"index{k}", index_arrays[k][:full_batch_size] + ctf_set.get_length() * j)
+                    for k in range(self.template_batch_size):
+                        index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size] + ctf_set.get_length() * pixel_size_index
 
-                # submit the command stream with the current batch size
-                self.cmd_stream.submit_any(full_batch_size)
+                        for rot_ind in range(rotations_batch_size): #, pixel_batch_size * ctf_batch_size):
+                            index_arrays[k][pixel_batch_width*rot_ind + actual_pixel_batch_size * ctf_batch_size:pixel_batch_width*(rot_ind+1)] = -ctf_set.get_length() * rotation_count * pixel_size_count
 
-                if enable_progress_bar:
-                    status_bar.update(param_count * rotations_batch_size)
+                    pixel_sizes_array[:full_batch_size] = np.tile(
+                        pixel_sizes_array[:pixel_batch_size * ctf_batch_size],
+                        rotations_batch_size
+                    )
+
+                    self.cmd_stream.set_var("pixel_size", pixel_sizes_array[:full_batch_size])
+
+                    #index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size] + ctf_set.get_length() * rotation_index
+                elif pixel_size_count == 1:
+                    for k in range(self.template_batch_size):
+                        index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size]
+                else:
+                    raise ValueError("Something went wrong.")
+
+                for rotation_index in range(0, rotation_count, rotations_batch_size):
+                    actual_rotation_batch_size = min(rotations_batch_size, rotation_count - rotation_index)
+
+                    if self.rotation is None:
+                        rotations_array[:actual_rotation_batch_size * ctf_batch_size * pixel_batch_size] = np.repeat(
+                            rotations[rotation_index:rotation_index + actual_rotation_batch_size, :],
+                            repeats=ctf_batch_size * pixel_batch_size,
+                            axis=0
+                        )
+
+                        self.cmd_stream.set_var(
+                            "rotation_matrix", 
+                            self.template.get_rotation_matricies(rotations_array[:full_batch_size, :])
+                        )
+
+                    for k in range(self.template_batch_size):
+                        self.cmd_stream.set_var(f"index{k}", index_arrays[k][:full_batch_size] + ctf_set.get_length() * pixel_size_count * rotation_index)
+
+                    # submit the command stream with the current batch size
+                    self.cmd_stream.submit_any(full_batch_size)
+
+                    if enable_progress_bar:
+                        status_bar.update(ctf_count * actual_rotation_batch_size)
 
         if enable_progress_bar:
             status_bar.close()

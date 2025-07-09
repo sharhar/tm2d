@@ -65,16 +65,17 @@ comparator = tm2d.ComparatorCrossCorrelation(
 results = tm2d.ResultsPixel(data_array.shape)
 
 params = tm2d.CTFParams.like_krios(
-    defocus = None,
+    defocus = None, # 12870
     B = 27.5,
-    #Cs = None
+    Cs = None
 )
 
 plan = tm2d.Plan(
     template_atomic,
     comparator,
     results,
-    pixel_size=1.056, # pixel size in Angstroms
+    rotation=[188.84183,  78.82107, 326],
+    #pixel_size=1.056, # pixel size in Angstroms
     ctf_params=params,
     template_batch_size=2
 )
@@ -89,18 +90,26 @@ rotations = tm2d.get_orientations_cube( # Get (phi, theta, psi) angles with cube
 )
 
 ctf_set = params.make_ctf_set(
-    defocus = np.arange(12000, 13000, 25),
-    #Cs = np.arange(0, 5e7, 1e6),
+    defocus = np.arange(12000, 13000, 4),
+    Cs = np.arange(0, 5e7, 1e5),
     #B = np.arange(0, 500, 2.5),
 )
 
+pixel_sizes = np.array([1.056, 1.156, 0.01]) # pixel sizes in Angstroms
+
 plan.run(
-    rotations,
     ctf_set,
+    #rotations=rotations,
+    pixel_sizes=pixel_sizes,
     enable_progress_bar=True
 )
 
-best_rotations = rotations[results.get_rotation_indicies(ctf_set.get_length())]
+print("Index of best match:", results.get_index_of_params_match()[0])
+print("Ctf Length:", ctf_set.get_length())
+print("Best rotation index:", results.get_index_of_params_match()[0] // ctf_set.get_length())
+print("Best CTF index:", results.get_index_of_params_match()[0] % ctf_set.get_length())
+
+best_rotations = rotations[results.get_rotation_indicies(ctf_set.get_length(), pixel_sizes.shape[0])]
 best_ctf_values = ctf_set.get_values_at_index(results.get_ctf_indicies(ctf_set.get_length()))
 
 for i in range(results.count):
@@ -109,11 +118,15 @@ for i in range(results.count):
 
     print(f"Micrograph {i + 1}:")
     print(f"\tMax cross-correlation: {results.get_mip()[i][results.get_location_of_best_match()[i]]}")
-    print(f"\tBest rotation: {rotations[results.get_index_of_params_match()[i] // ctf_set.get_length()]}")
+    #print(f"\tBest rotation: {rotations[results.get_index_of_params_match()[i] // ctf_set.get_length()]}")
 
-    best_ctf_index = results.get_index_of_params_match()[i] % ctf_set.get_length()
+    best_ctf_index = results.get_index_of_ctf_match(ctf_set.get_length()) #results.get_index_of_params_match()[i] % ctf_set.get_length()
 
     print(f"\tBest CTF: {ctf_set.get_values_at_index(best_ctf_index)}")
+
+    best_pixel_size_index = results.get_index_of_pixel_size_match(ctf_set.get_length(), pixel_sizes.shape[0])[i]
+
+    print(f"\tBest pixel size index: {pixel_sizes[best_pixel_size_index]}")
 
     #print(rotations.shape)
     #print(results.get_rotation_indicies(ctf_set.get_length()).shape)
