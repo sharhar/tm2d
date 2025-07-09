@@ -201,9 +201,6 @@ class Plan:
             ctf_batch_size = int(np.ceil(ctf_count / self.template_batch_size))
             rotations_pixels_batch_size = int(np.floor(batch_size / ctf_batch_size))
 
-            #otations_batch_size = min(rotations_pixels_batch_size, rotation_count)
-            #pixel_batch_size = rotations_pixels_batch_size // rotations_batch_size
-
             rotations_batch_size = rotations_pixels_batch_size
             pixel_batch_size = 1
 
@@ -246,6 +243,8 @@ class Plan:
                         pixel_sizes_array[:pixel_batch_size * ctf_batch_size],
                         rotations_batch_size
                     )
+
+                    #print(f"Setting pixel sizes: {pixel_sizes_array[:full_batch_size]}")
 
                     self.cmd_stream.set_var("pixel_size", pixel_sizes_array[:full_batch_size])
 

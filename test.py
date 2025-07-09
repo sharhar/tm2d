@@ -74,7 +74,7 @@ plan = tm2d.Plan(
     template_atomic,
     comparator,
     results,
-    rotation=[188.84183,  78.82107, 326],
+    #rotation=[188.84183,  78.82107, 326],
     #pixel_size=1.056, # pixel size in Angstroms
     ctf_params=params,
     template_batch_size=2
@@ -90,16 +90,16 @@ rotations = tm2d.get_orientations_cube( # Get (phi, theta, psi) angles with cube
 )
 
 ctf_set = params.make_ctf_set(
-    defocus = np.arange(12000, 13000, 4),
-    Cs = np.arange(0, 5e7, 1e5),
+    defocus = np.arange(12600, 12900, 2),
+    Cs = np.arange(1.9e7, 2.2e7, 5e4),
     #B = np.arange(0, 500, 2.5),
 )
 
-pixel_sizes = np.array([1.056, 1.156, 0.01]) # pixel sizes in Angstroms
+pixel_sizes = np.arange(1.006, 1.086, 0.0025) # pixel sizes in Angstroms
 
 plan.run(
     ctf_set,
-    #rotations=rotations,
+    rotations=rotations,
     pixel_sizes=pixel_sizes,
     enable_progress_bar=True
 )
@@ -126,7 +126,13 @@ for i in range(results.count):
 
     best_pixel_size_index = results.get_index_of_pixel_size_match(ctf_set.get_length(), pixel_sizes.shape[0])[i]
 
-    print(f"\tBest pixel size index: {pixel_sizes[best_pixel_size_index]}")
+    print(f"\tBest pixel size index: {best_pixel_size_index}")
+    print(f"\tBest pixel size: {pixel_sizes[best_pixel_size_index]}")
+
+    best_rotation_index = results.get_index_of_rotation_match(ctf_set.get_length(), pixel_sizes.shape[0])[i]
+
+    print(f"\tBest rotation index: {best_rotation_index}")
+    print(f"\tBest rotation: {rotations[best_rotation_index]}")
 
     #print(rotations.shape)
     #print(results.get_rotation_indicies(ctf_set.get_length()).shape)
