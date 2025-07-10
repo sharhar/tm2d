@@ -134,25 +134,6 @@ class ResultsPixel(Results):
             self.compile_results()
 
         return self.compiled_best_index_array
-    
-    def get_rotation_indicies(self, ctf_count: int, pixel_size_count: int):
-        if not self.compiled:
-            self.compile_results()
-        
-        return self.compiled_best_index_array // (ctf_count * pixel_size_count)
-    
-    def get_pixel_size_indicies(self, ctf_count: int, pixel_size_count: int):
-        if not self.compiled:
-            self.compile_results()
-
-        # Assuming pixel size indicies are the same as rotation indicies
-        return (self.compiled_best_index_array // ctf_count) % pixel_size_count
-
-    def get_ctf_indicies(self, ctf_count: int):
-        if not self.compiled:
-            self.compile_results()
-
-        return self.compiled_best_index_array % ctf_count
 
     def get_location_of_best_match(self):
         if not self.compiled:
@@ -165,25 +146,6 @@ class ResultsPixel(Results):
             self.compile_results()
 
         return self.compiled_index_of_params_match
-    
-    def get_index_of_rotation_match(self, ctf_count: int, pixel_size_count: int):
-        if not self.compiled:
-            self.compile_results()
-
-        return np.array(self.compiled_index_of_params_match) // (ctf_count * pixel_size_count)
-    
-    def get_index_of_pixel_size_match(self, ctf_count: int, pixel_size_count: int):
-        if not self.compiled:
-            self.compile_results()
-
-        # Assuming pixel size indicies are the same as rotation indicies
-        return (np.array(self.compiled_index_of_params_match) // ctf_count) % pixel_size_count
-    
-    def get_index_of_ctf_match(self, ctf_count: int):
-        if not self.compiled:
-            self.compile_results()
-
-        return np.array(self.compiled_index_of_params_match) % ctf_count
     
     def get_sum_cross(self):
         if not self.compiled:

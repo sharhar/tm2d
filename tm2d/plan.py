@@ -109,6 +109,58 @@ class Results:
         """
         raise NotImplementedError("reset must be implemented in a subclass.")
 
+class ParamSet:
+    rotations: Optional[np.ndarray] = None
+    pixel_sizes: Optional[np.ndarray] = None
+    ctf_set: Optional[CTFSet] = None
+
+    def __init__(self):
+        raise TypeError("CTFSet is not meant to be instantiated directly. Use CTFParams.make_ctf_set() instead.")
+
+    @classmethod
+    def from_params(cls,
+                    rotations: np.ndarray,
+                    pixel_sizes: np.ndarray,
+                    ctf_set: CTFSet) -> 'ParamSet':
+        instance = cls.__new__(cls)
+
+        instance.rotations = rotations
+        instance.pixel_sizes = pixel_sizes
+        instance.ctf_set = ctf_set
+
+        return instance
+    
+    def get_rotation_count(self) -> int:
+        if self.rotations is None:
+            return 1
+        return self.rotations.shape[0]
+    
+    def get_pixel_size_count(self) -> int:
+        if self.pixel_sizes is None:
+            return 1
+        return self.pixel_sizes.shape[0]
+    
+    def get_ctf_count(self) -> int:
+        return self.ctf_set.get_length()
+    
+    def get_total_count(self) -> int:
+        return self.get_rotation_count() * self.get_pixel_size_count() * self.get_ctf_count()
+
+    def index_to_values(self, index: int) -> dict[str, np.ndarray]:
+        ctf_index = index % self.get_ctf_count()
+        pixel_size_index = (index // self.get_ctf_count()) % self.get_pixel_size_count()
+        rotation_index = index // (self.get_ctf_count() * self.get_pixel_size_count())
+
+        values = self.ctf_set.get_values_at_index(ctf_index)
+
+        if self.pixel_sizes is not None:
+            values["pixel_size"] = self.pixel_sizes[pixel_size_index]
+        
+        if self.rotations is not None:
+            values["rotation"] = self.rotations[rotation_index, :]
+
+        return values
+
 class Plan:
     template: Template
     comparator: Comparator
@@ -167,19 +219,20 @@ class Plan:
         self.results.reset()
 
     def run(self,
-            ctf_set: CTFSet,
-            rotations: Optional[np.ndarray] = None,
-            pixel_sizes: Optional[Union[np.ndarray]] = None,
+            #ctf_set: CTFSet,
+            #rotations: Optional[np.ndarray] = None,
+            #pixel_sizes: Optional[Union[np.ndarray]] = None,
+            params: ParamSet,
             enable_progress_bar: bool = False,
             batch_size: int = 32):
-        if rotations is None:
-            assert self.rotation is not None, "If rotations are not provided, the rotation attribute must be set."
+        # if rotations is None:
+        #     assert self.rotation is not None, "If rotations are not provided, the rotation attribute must be set."
         
-        if pixel_sizes is None:
-            assert self.pixel_size is not None, "If pixel sizes are not provided, the pixel_size attribute must be set."
+        # if pixel_sizes is None:
+        #     assert self.pixel_size is not None, "If pixel sizes are not provided, the pixel_size attribute must be set."
 
-        rotation_count = 1 if rotations is None else rotations.shape[0]
-        pixel_size_count = 1 if pixel_sizes is None else pixel_sizes.shape[0]
+        #rotation_count = 1 if rotations is None else rotations.shape[0]
+        #pixel_size_count = 1 if pixel_sizes is None else pixel_sizes.shape[0]
 
         rotations_array = np.zeros(shape=(batch_size, 3), dtype=np.float32)
         pixel_sizes_array = np.zeros(shape=(batch_size,), dtype=np.float32)
@@ -189,44 +242,44 @@ class Plan:
         max_batch_size = self.template_batch_size * batch_size
         input_array = np.zeros(shape=(batch_size,), dtype=np.float32)
 
-        if ctf_set.get_length() == 1 and self.template_batch_size > 1:
+        if params.get_ctf_count() == 1 and self.template_batch_size > 1:
             print("Warning: Only one ctf parameter combination provided, but template_batch_size is greater than 1. This will result in suboiptimal performance.")
 
         if enable_progress_bar:
-            status_bar = tqdm.tqdm(total=rotation_count * pixel_size_count * ctf_set.get_length())
+            status_bar = tqdm.tqdm(total=params.get_total_count()) #rotation_count * pixel_size_count * ctf_set.get_length())
         
-        for i in range(0, ctf_set.get_length(), max_batch_size):
+        for i in range(0, params.get_ctf_count(), max_batch_size):
 
-            ctf_count = min(max_batch_size, ctf_set.get_length() - i)
+            ctf_count = min(max_batch_size, params.get_ctf_count() - i)
             ctf_batch_size = int(np.ceil(ctf_count / self.template_batch_size))
             rotations_pixels_batch_size = int(np.floor(batch_size / ctf_batch_size))
 
             rotations_batch_size = rotations_pixels_batch_size
             pixel_batch_size = 1
 
-            if rotation_count == 1:
+            if params.get_rotation_count() == 1:
                 rotations_batch_size = 1
                 pixel_batch_size = rotations_pixels_batch_size
 
             full_batch_size = ctf_batch_size * rotations_batch_size * pixel_batch_size
 
-            ctf_set.set_ctf_batch(
+            params.ctf_set.set_ctf_batch(
                 ctf_index_arrays,
                 input_array,
                 self.cmd_stream,
                 ctf_batch_size,
                 rotations_pixels_batch_size,
-                rotation_count * pixel_size_count,
+                params.get_rotation_count() * params.get_pixel_size_count(),
                 self.template_batch_size,
                 i
             )
 
-            for pixel_size_index in range(0, pixel_size_count, pixel_batch_size):
-                actual_pixel_batch_size = min(pixel_batch_size, pixel_size_count - pixel_size_index)
+            for pixel_size_index in range(0, params.get_pixel_size_count(), pixel_batch_size):
+                actual_pixel_batch_size = min(pixel_batch_size, params.get_pixel_size_count() - pixel_size_index)
 
-                if self.pixel_size is None:
+                if params.pixel_sizes is not None:
                     pixel_sizes_array[:actual_pixel_batch_size * ctf_batch_size] = np.repeat(
-                        pixel_sizes[pixel_size_index:pixel_size_index + actual_pixel_batch_size],
+                        params.pixel_sizes[pixel_size_index:pixel_size_index + actual_pixel_batch_size],
                         repeats=ctf_batch_size,
                         axis=0
                     )
@@ -234,33 +287,29 @@ class Plan:
                     pixel_batch_width = pixel_batch_size * ctf_batch_size
 
                     for k in range(self.template_batch_size):
-                        index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size] + ctf_set.get_length() * pixel_size_index
+                        index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size] + params.get_ctf_count() * pixel_size_index
 
-                        for rot_ind in range(rotations_batch_size): #, pixel_batch_size * ctf_batch_size):
-                            index_arrays[k][pixel_batch_width*rot_ind + actual_pixel_batch_size * ctf_batch_size:pixel_batch_width*(rot_ind+1)] = -ctf_set.get_length() * rotation_count * pixel_size_count
+                        for rot_ind in range(rotations_batch_size):
+                            index_arrays[k][pixel_batch_width*rot_ind + actual_pixel_batch_size * ctf_batch_size:pixel_batch_width*(rot_ind+1)] = -params.get_total_count()
 
                     pixel_sizes_array[:full_batch_size] = np.tile(
                         pixel_sizes_array[:pixel_batch_size * ctf_batch_size],
                         rotations_batch_size
                     )
 
-                    #print(f"Setting pixel sizes: {pixel_sizes_array[:full_batch_size]}")
-
                     self.cmd_stream.set_var("pixel_size", pixel_sizes_array[:full_batch_size])
-
-                    #index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size] + ctf_set.get_length() * rotation_index
-                elif pixel_size_count == 1:
+                elif params.get_pixel_size_count() == 1:
                     for k in range(self.template_batch_size):
                         index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size]
                 else:
                     raise ValueError("Something went wrong.")
 
-                for rotation_index in range(0, rotation_count, rotations_batch_size):
-                    actual_rotation_batch_size = min(rotations_batch_size, rotation_count - rotation_index)
+                for rotation_index in range(0, params.get_rotation_count(), rotations_batch_size):
+                    actual_rotation_batch_size = min(rotations_batch_size, params.get_rotation_count() - rotation_index)
 
-                    if self.rotation is None:
+                    if params.rotations is not None:
                         rotations_array[:actual_rotation_batch_size * ctf_batch_size * pixel_batch_size] = np.repeat(
-                            rotations[rotation_index:rotation_index + actual_rotation_batch_size, :],
+                            params.rotations[rotation_index:rotation_index + actual_rotation_batch_size, :],
                             repeats=ctf_batch_size * pixel_batch_size,
                             axis=0
                         )
@@ -269,9 +318,14 @@ class Plan:
                             "rotation_matrix", 
                             self.template.get_rotation_matricies(rotations_array[:full_batch_size, :])
                         )
+                    
+                    rotation_offset = params.get_ctf_count() * params.get_pixel_size_count() * rotation_index
 
                     for k in range(self.template_batch_size):
-                        self.cmd_stream.set_var(f"index{k}", index_arrays[k][:full_batch_size] + ctf_set.get_length() * pixel_size_count * rotation_index)
+                        self.cmd_stream.set_var(
+                            f"index{k}",
+                            index_arrays[k][:full_batch_size] + rotation_offset
+                        )
 
                     # submit the command stream with the current batch size
                     self.cmd_stream.submit_any(full_batch_size)
@@ -282,3 +336,25 @@ class Plan:
         if enable_progress_bar:
             status_bar.close()
     
+    def make_param_set(self,
+                        rotations: Optional[np.ndarray] = None,
+                        pixel_sizes: Optional[np.ndarray] = None,
+                        **kwargs) -> ParamSet:
+        if rotations is None:
+            assert self.rotation is not None, "If rotations are not provided, the rotation attribute must be set."
+        else:
+            assert self.rotation is None, "If rotations are provided, the rotation attribute must not be set."
+        
+        if pixel_sizes is None:
+            assert self.pixel_size is not None, "If pixel sizes are not provided, the pixel_size attribute must be set."
+        else:
+            assert self.pixel_size is None, "If pixel sizes are provided, the pixel_size attribute must not be set."
+
+        """
+        Create a ParamSet with the given rotations, pixel sizes, and CTF parameters.
+        """
+        return ParamSet.from_params(
+            rotations=rotations,
+            pixel_sizes=pixel_sizes,
+            ctf_set=self.ctf_params.make_ctf_set(**kwargs)
+        )

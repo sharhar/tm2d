@@ -25,6 +25,6 @@ from .utilities.file_loading import load_density_from_mrc as load_template_array
 from .simulators.image import simulate_pdf
 from .simulators.image import get_im_from_pdf
 
-from .plan import Plan, Template, Comparator, Results
+from .plan import Plan, Template, Comparator, Results, ParamSet
 
 from .plan_standard import PlanStandard
