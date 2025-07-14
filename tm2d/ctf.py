@@ -38,6 +38,9 @@ class CTFSet:
     def get_length(self):
         return self.combinations_array.shape[0]
     
+    def get_lengths_list(self):
+        return self.lengths
+    
     def set_ctf_batch(self,
                       index_arrays: list[np.ndarray],
                       input_array: np.ndarray,

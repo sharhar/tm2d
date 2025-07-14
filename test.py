@@ -62,18 +62,19 @@ comparator = tm2d.ComparatorCrossCorrelation(
     template_atomic.get_shape() # shape of the template
 )
 
-results = tm2d.ResultsPixel(data_array.shape)
+# results = tm2d.ResultsPixel(data_array.shape)
+results = tm2d.ResultsParam(data_array.shape[0], 5000000)
 
 plan = tm2d.Plan(
     template_atomic,
     comparator,
     results,
-    rotation=[188.84183,  78.82107, 326],
+    #rotation=[188.84183,  78.82107, 326],
     #pixel_size=1.056, # pixel size in Angstroms
     ctf_params=tm2d.CTFParams.like_krios(
         defocus = None, # 12870
-        B = 27.5,
-        Cs = None
+        B = None,
+        Cs = 2.7e7
     ),
     template_batch_size=2
 )
@@ -88,15 +89,25 @@ rotations = tm2d.get_orientations_cube( # Get (phi, theta, psi) angles with cube
 )
 
 params = plan.make_param_set(
-    #rotations=rotations,
-    pixel_sizes=np.arange(1.046, 1.066, 0.0001),
+    rotations=rotations,
+    pixel_sizes = np.arange(1.046, 1.066, 0.01),
 
-    defocus = np.arange(12600, 12900, 5),
-    Cs = np.arange(1.9e7, 2.2e7, 1e4),
-    #B = np.arange(0, 500, 2.5),
+    defocus = np.arange(12700, 13000, 25),
+    # Cs = np.arange(1.9e7, 2.2e7, 1e4),
+    B = np.arange(0, 500, 25),
 )
 
 plan.run(params, enable_progress_bar=True)
+
+values, axis_names = params.get_values_tensor(results.get_mip_list())
+
+
+print("Values shape:", values.shape)
+print("Axis names:", axis_names)
+#print("Values:", values)
+
+
+exit()
 
 for i in range(results.count):
     #np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
@@ -105,11 +116,16 @@ for i in range(results.count):
     match_index = results.get_index_of_params_match()[i]
     match_location = results.get_location_of_best_match()[i]
 
-    print(f"Micrograph {i + 1}:")
+    best_indicies = results.get_best_index_array()[i]
+
+    print(f"Micrograph {i}:")
     print(f"\tMax cross-correlation: {results.get_mip()[i][match_location]}")
 
     for param_name, param_value in params.index_to_values(match_index).items():
         print(f"\tBest {param_name}: {param_value}")
+
+    for param_name, param_values in params.index_to_values(best_indicies).items():
+        np.save(f"{output_dir}/{param_name}_{i}.npy", param_values)
 
     #print(f"\tBest params: {params.index_to_values(match_index)}")
 

@@ -112,7 +112,7 @@ class Results:
 class ParamSet:
     rotations: Optional[np.ndarray] = None
     pixel_sizes: Optional[np.ndarray] = None
-    ctf_set: Optional[CTFSet] = None
+    ctf_set: CTFSet
 
     def __init__(self):
         raise TypeError("CTFSet is not meant to be instantiated directly. Use CTFParams.make_ctf_set() instead.")
@@ -146,7 +146,7 @@ class ParamSet:
     def get_total_count(self) -> int:
         return self.get_rotation_count() * self.get_pixel_size_count() * self.get_ctf_count()
 
-    def index_to_values(self, index: int) -> dict[str, np.ndarray]:
+    def get_values_at_index(self, index: int) -> dict[str, np.ndarray]:
         ctf_index = index % self.get_ctf_count()
         pixel_size_index = (index // self.get_ctf_count()) % self.get_pixel_size_count()
         rotation_index = index // (self.get_ctf_count() * self.get_pixel_size_count())
@@ -160,6 +160,77 @@ class ParamSet:
             values["rotation"] = self.rotations[rotation_index, :]
 
         return values
+    
+    def _get_tensor_shape(self, micrograph_count: int) -> tuple:
+        ctf_lengths = self.ctf_set.get_lengths_list()
+        params_count = len(ctf_lengths) + 1
+
+        shape_prefix = None
+
+        if self.rotations is None and self.pixel_sizes is None:
+            shape_prefix = tuple()
+        elif self.rotations is None:
+            shape_prefix = (self.get_pixel_size_count(),)
+            params_count += 1
+        elif self.pixel_sizes is None:
+            shape_prefix = (self.get_rotation_count(),)
+            params_count += 3
+        else:
+            shape_prefix = (self.get_rotation_count(), self.get_pixel_size_count())
+            params_count += 4
+
+        return (micrograph_count, ) + shape_prefix + tuple(ctf_lengths) + (params_count,)
+        
+    def get_values_tensor(self, mip_list: np.ndarray) -> np.ndarray:
+        cropped_mip_list = mip_list[:, :self.get_total_count()]
+
+        tensor_shape = self._get_tensor_shape(cropped_mip_list.shape[0])
+
+        has_rotations = self.rotations is not None
+        has_pixel_sizes = self.pixel_sizes is not None
+
+        prefix_count = 1 + int(has_rotations) + int(has_pixel_sizes)
+
+        initial_values_shape = (
+            *tensor_shape[:prefix_count],
+            np.prod(tensor_shape[prefix_count:-1]),
+            tensor_shape[-1]
+        )
+
+        axis_names_dict = {
+            field_name: i + prefix_count for i, field_name in enumerate(self.ctf_set.field_names)
+        }
+        values_tensor = np.zeros(shape=initial_values_shape, dtype=np.float32)
+
+        if self.rotations is None and self.pixel_sizes is None:
+            values_tensor[:, :, 0] = cropped_mip_list
+            values_tensor[:, :, 1:] = self.ctf_set.combinations_array
+        elif self.rotations is None:
+            values_tensor[:, :, :, 0] = cropped_mip_list.reshape(values_tensor.shape[:-1])
+            values_tensor[:, :, :, 1] = self.pixel_sizes.reshape(1, -1, 1)
+            values_tensor[:, :, :, 2:] = self.ctf_set.combinations_array
+
+            axis_names_dict["pixel_size"] = 1
+
+        elif self.pixel_sizes is None:
+            values_tensor[:, :, :, 0] = cropped_mip_list.reshape(values_tensor.shape[:-1])
+            values_tensor[:, :, :, 1:4] = self.rotations.reshape(1, -1, 1, 3)
+            values_tensor[:, :, :, 4:] = self.ctf_set.combinations_array
+        
+            axis_names_dict["rotation"] = 1
+        else:
+            values_tensor[:, :, :, :, 0] = cropped_mip_list.reshape(values_tensor.shape[:-1])
+            values_tensor[:, :, :, :, 1:4] = self.rotations.reshape(1, -1, 1, 1, 3)
+            values_tensor[:, :, :, :, 4] = self.pixel_sizes.reshape(1, 1, -1, 1)
+            values_tensor[:, :, :, :, 5:] = self.ctf_set.combinations_array
+
+            axis_names_dict["rotation"] = 1
+            axis_names_dict["pixel_size"] = 2
+
+        return values_tensor.reshape(tensor_shape), axis_names_dict
+
+        
+
 
 class Plan:
     template: Template

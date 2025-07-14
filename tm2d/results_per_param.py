@@ -4,7 +4,7 @@ from vkdispatch.codegen.abreviations import *
 
 import numpy as np
 
-from .plan import Results
+from .plan import Results, ParamSet
 
 from typing import Optional
 
@@ -20,7 +20,7 @@ class ResultsParam(Results):
     
     def reset(self):
         self.best_values_buffer.write(
-            (np.ones(shape=self.best_values_buffer.shape, dtype=np.float32) * -1000000).astype(np.float32)
+            (np.ones(shape=self.best_values_buffer.shape) * -1000000).astype(np.float32)
         )
     
     def check_comparison(self, comparison_buffer: vd.RFFTBuffer, *indicies: vc.Var[vc.i32]):
@@ -89,23 +89,32 @@ class ResultsParam(Results):
 
         self.compiled = True
     
-    def get_param_list(self, rotations: np.ndarray, defocus_values: np.ndarray, IPA_count: int, true_size: Optional[int] = None):
+    def get_mip_list(self):
         if not self.compiled:
             self.compile_results()
 
-        actual_best_values = self.compiled_best_values if true_size is None else self.compiled_best_values[:true_size]
+        return self.compiled_best_values
 
-        assert actual_best_values.shape[1] == rotations.shape[0] * defocus_values.shape[0], "The number of best MIPs does not match the number of parameters"
-        assert rotations.shape[0] % IPA_count == 0, "The number of rotations must be divisible by the number of in-plane angles"
+        # actual_best_values = self.compiled_best_values[:, :params.get_total_count()] # if true_size is None else self.compiled_best_values[:true_size]
+        
+        # print(params.get_total_count())
+        # print(self.compiled_best_values.shape)
+        # print(actual_best_values.shape)
+        
+        # param_values_dict = params.index_to_values(np.arange(0, actual_best_values.shape[1], 1))
+        # print(param_values_dict)
 
-        param_indicies = np.array(range(actual_best_values.shape[1]), dtype=np.int32)
-        defocus_indicies = param_indicies // rotations.shape[0]
-        rotation_indicies = param_indicies % rotations.shape[0]
+        #assert actual_best_values.shape[1] == rotations.shape[0] * defocus_values.shape[0], "The number of best MIPs does not match the number of parameters"
+        #assert rotations.shape[0] % IPA_count == 0, "The number of rotations must be divisible by the number of in-plane angles"
 
-        param_list_result = np.zeros((actual_best_values.shape[0], actual_best_values.shape[1], 5), dtype=np.float32)
-        param_list_result[:, :, :3] = rotations[rotation_indicies]
-        param_list_result[:, :, 3] = defocus_values[defocus_indicies]
-        param_list_result[:, :, 4] = actual_best_values
+        #param_indicies = np.array(range(actual_best_values.shape[1]), dtype=np.int32)
+        #defocus_indicies = param_indicies // rotations.shape[0]
+        #rotation_indicies = param_indicies % rotations.shape[0]
 
-        return param_list_result.reshape(actual_best_values.shape[0], defocus_values.shape[0], rotations.shape[0] // IPA_count, IPA_count,  5)
+        #param_list_result = np.zeros((actual_best_values.shape[0], actual_best_values.shape[1], 5), dtype=np.float32)
+        #param_list_result[:, :, :3] = rotations[rotation_indicies]
+        #param_list_result[:, :, 3] = defocus_values[defocus_indicies]
+        #param_list_result[:, :, 4] = actual_best_values
+
+        #return param_list_result.reshape(actual_best_values.shape[0], defocus_values.shape[0], rotations.shape[0] // IPA_count, IPA_count,  5)
 
