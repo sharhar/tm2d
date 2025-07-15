@@ -91,6 +91,8 @@ class ResultsPixel(Results):
         sum2_crosses = self.sum2_cross.read()
         counts = self.count_buffer.read()
 
+        # print(counts)
+
         final_results = [np.zeros(shape=(self.max_cross.shape[0], self.max_cross.shape[1], self.max_cross.shape[2], 2), dtype=np.float64) for _ in max_crosses]
 
         for i in range(len(max_crosses)):
@@ -105,12 +107,37 @@ class ResultsPixel(Results):
         self.compiled_mip = true_final_result[:, :, :, 0]
         self.compiled_best_index_array = true_final_result[:, :, :, 1].astype(np.int32)
 
+        #def crop_array(arr):
+        #    #arr = np.fft.ifftshift(arr, axes=(2, 3))
+        #    arr_cropped = arr[:, 0, :2, :2, 0]
+        #    arr_transposed = arr_cropped.transpose((0, 1, 2))
+
+        #    return arr_transposed, np.sum(arr_transposed, axis=(0,))
+
+        #def print_array_info(arr, name):
+        #    crop, sum_value = crop_array(arr)
+        #    print(f"{name}: {crop} (sum = {sum_value})")
+
+        #print("sum_crosses:", sum_crosses[:, 0, :2, :2, :].transpose((1, 2, 3, 0)), "SUM", np.sum(sum_crosses[:, 0, :2, :2, :]))
+        #print("sum2_crosses:", sum2_crosses[:, 0, :2, :2, :].transpose((1, 2, 3, 0)), "SUM", np.sum(sum2_crosses[:, 0, :2, :2, :]))
+
+        #print_array_info(sum_crosses, "sum_crosses")
+        #print_array_info(sum2_crosses, "sum2_crosses")
+
         self.compiled_sum_cross = np.fft.ifftshift(np.array(sum_crosses, dtype=np.float64).sum(axis=(0, 4)), axes=(1, 2))
         self.compiled_sum2_cross = np.fft.ifftshift(np.array(sum2_crosses, dtype=np.float64).sum(axis=(0, 4)), axes=(1, 2))
         self.compiled_count = np.array(counts).sum(axis=0)
 
+        #print("compiled_count[0]:", self.compiled_count[0])
+        #print("compiled_sum_cross[0, :2, :2]:", self.compiled_sum_cross[0, :2, :2])
+        #print("compiled_sum2_cross[0, :2, :2]:", self.compiled_sum2_cross[0, :2, :2])
+
         self.compiled_cross_mean = self.compiled_sum_cross / self.compiled_count[:, None, None] # per-pixel mean of cross-correlation
         self.compiled_cross_variance = self.compiled_sum2_cross / self.compiled_count[:, None, None] - self.compiled_cross_mean * self.compiled_cross_mean # per-pixel variance of cross-correlation
+
+        #print("compiled_cross_mean[0, :2, :2]:", self.compiled_cross_mean[0, :2, :2])
+        #print("compiled_cross_variance[0, :2, :2]:", self.compiled_cross_variance[0, :2, :2])
+
         self.compiled_z_score = (self.compiled_mip - self.compiled_cross_mean) / np.sqrt(self.compiled_cross_variance)
         
         self.compiled_location_of_best_match = []
@@ -218,18 +245,22 @@ class ResultsPixel(Results):
                 if i != 0:
                     back_buffer_offset[:] = back_buffer_offset + self.max_cross.shape[1] * (self.max_cross.shape[2] + 2)
 
+                vc.if_statement(index_values[i] >= 0)
+
                 mip_register[:] = back_buffer[back_buffer_offset]
 
                 sum_cross_register[:] = double_precision_add_f32(sum_cross_register, mip_register)
                 sum2_cross_register[:] = double_precision_add_f32(sum2_cross_register, mip_register * mip_register)
 
-                vc.if_all(micrograph_inner_index == 0, index_values[i] >= 0)
+                vc.if_statement(micrograph_inner_index == 0)
                 count_register[:] = count_register + 1
                 vc.end()
 
-                vc.if_all(mip_register > best_mip_register, index_values[i] >= 0)
+                vc.if_statement(mip_register > best_mip_register)
                 best_mip_register[:] = mip_register
                 best_index_register[:] = index_values[i]
+                vc.end()
+
                 vc.end()
 
 

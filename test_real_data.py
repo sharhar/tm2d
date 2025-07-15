@@ -63,7 +63,7 @@ laseroff_1um_dw = "/BigData/Workspaces/in_focus/25_05_14_rubisco/MotionCorr/job0
 
 micrographs = np.array([
     read_mrc(laseron_focus_good_dw)[:512, :512],
-    read_mrc(laseron_focus_good)[:512, :512],
+    #read_mrc(laseron_focus_good)[:512, :512],
     #tu.whiten_image(read_mrc()[912:1936, 924:1948])
 ])
 
@@ -95,7 +95,8 @@ plan = tm2d.PlanStandard(
         f_OL = 20e7,
         lpp_rot = 0,
         defocus=None
-    )
+    ),
+    template_batch_size=4
 )
 
 plan.set_data(micrographs)
@@ -116,15 +117,21 @@ rotations = tm2d.get_orientations_healpix(
     )
 )
 
+#print(rotations[0])
+
 #defocus_values = np.arange(9500, 10500, 500) #400, 900, 100)
 
-ctf_set = plan.ctf_params.make_ctf_set(
+#ctf_set = plan.ctf_params.make_ctf_set(
+#    defocus=np.arange(600, 1100, 200),
+#)
+
+params = plan.make_param_set(
+    rotations=rotations, #np.array([[ 71.71875,  70.52878, 115.     ]]), #, rotations,
     defocus=np.arange(600, 1100, 200),
 )
 
 plan.run(
-    rotations,
-    ctf_set,
+    params,
     enable_progress_bar=True
 )
 
@@ -144,6 +151,10 @@ np.save("sum2_cross0.npy", res.get_sum2_cross()[0])
 
 np.save("best_params.npy0", res.get_best_index_array()[0])
 #np.save("best_params.npy1", res.get_best_index_array()[1])
+
+# corr = plan.comparison_buffer.read_real().sum(axis=0)
+
+exit()
 
 best_rotation_index = res.get_index_of_params_match()[0] // ctf_set.get_length()
 best_defocus_index = res.get_index_of_params_match()[0] % ctf_set.get_length()

@@ -51,9 +51,19 @@ template_atomic = tm2d.TemplateAtomic(
     tu.load_coords_from_npz("data/parsed_5lks_LSU.npz")
 )
 
+template_image = template_atomic.make_template(
+    [188.84183,  78.82107, 326],
+    1.056,
+    tm2d.CTFParams.like_krios(
+        defocus=12870
+    )
+).read_real(0)[0]
+
+#np.save("template.npy", template_image)
+
 data_array = np.array(
     [
-        tu.whiten_image(np.load("data/bronwyn/image.npy")),
+        tu.whiten_image(template_image),
     ]
 )
 
@@ -62,19 +72,17 @@ comparator = tm2d.ComparatorCrossCorrelation(
     template_atomic.get_shape() # shape of the template
 )
 
-# results = tm2d.ResultsPixel(data_array.shape)
-results = tm2d.ResultsParam(data_array.shape[0], 5000000)
+results = tm2d.ResultsPixel(data_array.shape)
+# results = tm2d.ResultsParam(data_array.shape[0], 5000000)
 
 plan = tm2d.Plan(
     template_atomic,
     comparator,
     results,
     #rotation=[188.84183,  78.82107, 326],
-    #pixel_size=1.056, # pixel size in Angstroms
+    pixel_size=1.056, # pixel size in Angstroms
     ctf_params=tm2d.CTFParams.like_krios(
         defocus = None, # 12870
-        B = None,
-        Cs = 2.7e7
     ),
     template_batch_size=4
 )
@@ -90,30 +98,18 @@ rotations = tm2d.get_orientations_cube( # Get (phi, theta, psi) angles with cube
 
 params = plan.make_param_set(
     rotations=rotations,
-    pixel_sizes = np.arange(1.046, 1.066, 0.01),
+    # pixel_sizes = np.arange(1.046, 1.066, 0.01),
 
     defocus = np.arange(12700, 13000, 25),
     # Cs = np.arange(1.9e7, 2.2e7, 1e4),
-    B = np.arange(0, 500, 25),
+    # B = np.arange(0, 500, 25),
 )
 
 plan.run(params, enable_progress_bar=True)
 
-values, axis_names = params.get_values_tensor(results.get_mip_list())
-
-
-print("Values shape:", values.shape)
-print("Axis names:", axis_names)
-#print("Values:", values)
-
-
-[2416978.5, 2091720.,  2012525.1, 2382810.5, 1977114.6, 2047371.1, 2563033.8 ,2040986.1, 1949104.9, 2290209. , 2064193.2 ,2057553.1]
-
-exit()
-
 for i in range(results.count):
-    #np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
-    #np.save(f"{output_dir}/Z_score{i}.npy", results.get_z_score()[i])
+    np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
+    np.save(f"{output_dir}/Z_score{i}.npy", results.get_z_score()[i])
 
     match_index = results.get_index_of_params_match()[i]
     match_location = results.get_location_of_best_match()[i]
@@ -123,17 +119,8 @@ for i in range(results.count):
     print(f"Micrograph {i}:")
     print(f"\tMax cross-correlation: {results.get_mip()[i][match_location]}")
 
-    for param_name, param_value in params.index_to_values(match_index).items():
+    for param_name, param_value in params.get_values_at_index(match_index).items():
         print(f"\tBest {param_name}: {param_value}")
 
-    for param_name, param_values in params.index_to_values(best_indicies).items():
+    for param_name, param_values in params.get_values_at_index(best_indicies).items():
         np.save(f"{output_dir}/{param_name}_{i}.npy", param_values)
-
-    #print(f"\tBest params: {params.index_to_values(match_index)}")
-
-    #np.save(f"{output_dir}/phi_{i + 1}.npy", best_rotations[i, :, :, 0])
-    #np.save(f"{output_dir}/theta_{i + 1}.npy", best_rotations[i, :, :, 1])
-    #np.save(f"{output_dir}/psi_{i + 1}.npy", best_rotations[i, :, :, 2])
-
-    #for k, v in best_ctf_values.items():
-    #    np.save(f"{output_dir}/{k}_{i + 1}.npy", v[i])
