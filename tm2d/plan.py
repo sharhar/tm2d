@@ -8,6 +8,8 @@ from typing import Union, List, Tuple, Optional
 
 from .ctf import CTFParams, CTFSet
 
+from .utilities import whiten_buffer
+
 class Template:
     def __init__(self):
         raise NotImplementedError("Template is an abstract class. Please implement it in a subclass.")
@@ -248,7 +250,8 @@ class Plan:
                  rotation: Optional[np.ndarray] = None,
                  pixel_size: Optional[float] = None,
                  ctf_params: Optional[CTFParams] = None,
-                 template_batch_size: int = 2):
+                 template_batch_size: int = 2,
+                 whiten_template: bool = False):
 
         self.template_batch_size = template_batch_size
 
@@ -273,6 +276,9 @@ class Plan:
             cmd_stream=self.cmd_stream,
             ctf_params=ctf_params
         )
+
+        if whiten_template:
+            whiten_buffer(self.template_buffer)
 
         self.comparison_buffer = self.comparator.compare_template(self.template_buffer)
 

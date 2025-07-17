@@ -19,4 +19,4 @@ from .rotation_matricies import get_cisTEM_rotation_matrix
 
 from .fftshift_util import fftshift
 
-from .whitener import whiten_image
+from .whitener import whiten_image, whiten_buffer

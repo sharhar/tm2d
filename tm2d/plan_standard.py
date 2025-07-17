@@ -17,7 +17,8 @@ class PlanStandard(Plan):
                  rotation: np.ndarray = None,
                  pixel_size: float = None,
                  ctf_params: CTFParams = None,
-                 template_batch_size: int = 2):
+                 template_batch_size: int = 2,
+                 whiten_template: bool = False):
         super().__init__(
             template,
             ComparatorCrossCorrelation(data_shape, template.get_shape()),
@@ -25,5 +26,6 @@ class PlanStandard(Plan):
             rotation,
             pixel_size,
             ctf_params,
-            template_batch_size
+            template_batch_size,
+            whiten_template
         )

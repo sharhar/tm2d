@@ -65,7 +65,7 @@ def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):
 
 class ComparatorCrossCorrelation(Comparator):
     def __init__(self, shape: tuple, template_shape: tuple):
-        assert len(shape) == 3, "Shape must be a 3D tuple (N, H, W)."
+        assert len(shape) == 3, "Shape must be a 3D tuple (N, H, W) but got: {}".format(shape)
 
         self.micrographs_buffer = vd.RFFTBuffer(shape)
 
