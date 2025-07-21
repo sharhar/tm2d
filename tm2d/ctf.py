@@ -278,7 +278,7 @@ class CTFParams:
 
         return args
     
-    def assemble_params_list_from_args(self, args_list: list[vc.Var], template_count: int):
+    def assemble_params_list_from_args(self, args_list: list[vc.Var], template_count: int) -> "list[CTFParams]":
         fields = dataclasses.fields(self)
         
         assert len(args_list) == len(fields) * template_count, f"Expected {len(fields) * template_count} args, got {len(args_list)}"
@@ -392,9 +392,19 @@ def ctf_filter(
 
     return CTF
 
-def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel_size: float, defocus: float):
-    @vd.shader(exec_size=lambda args: args.buff.size)
-    def ctf_apply_shader(buff: vc.Buff[c64], defocus_vars: vc.Var[vc.v4]):
+def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel_size: float):
+    #@vd.shader(exec_size=lambda args: args.buff.size)
+    with vc.builder_context() as builder:
+        signature = vd.ShaderSignature.from_type_annotations(
+            builder,
+            [Buff[c64]] + ctf_params.get_type_list(),
+        )
+
+        buff = signature.get_variables()[0]
+        shader_ctf_params = ctf_params.assemble_params_list_from_args(
+            signature.get_variables()[1:], 1
+        )[0]
+
         ind = vc.global_invocation().x.copy()
 
         pos_2d = vc.new_vec2()
@@ -404,13 +414,18 @@ def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel
 
         buff[ind] *= ctf_filter(
             buffer.shape[1:],
-            defocus_vars,
             pos_2d,
-            ctf_params,
+            shader_ctf_params,
             pixel_size
         )
 
-    ctf_apply_shader(buffer, [defocus, 4000, 4000, 0])
+        ctf_apply_shader = vd.ShaderObject(
+            builder.build("apply_ctf_to_rfft_buffer"), 
+            signature,
+            exec_count=buffer.size
+        )
+
+    ctf_apply_shader(buffer, *ctf_params.get_args(None, 1))
 
 def rfft2_to_fft2(rfft_result, original_shape):
     rows, cols = original_shape
@@ -432,7 +447,7 @@ def rfft2_to_fft2(rfft_result, original_shape):
     
     return full_fft
 
-def generate_ctf(box_size: tuple[int, int], pixel_size: float, defocus: float, ctf_params: CTFParams = None) -> np.ndarray:
+def generate_ctf(box_size: tuple[int, int], pixel_size: float, ctf_params: CTFParams = None) -> np.ndarray:
     result_buffer = vd.RFFTBuffer((1, *box_size))
 
     ones = np.ones(shape=result_buffer.shape, dtype=np.float32)
@@ -441,8 +456,7 @@ def generate_ctf(box_size: tuple[int, int], pixel_size: float, defocus: float, c
     apply_ctf_to_rfft_buffer(
         result_buffer,
         ctf_params if ctf_params is not None else get_ctf_params_set('krios'),
-        pixel_size,
-        defocus
+        pixel_size
     )
 
     rctf2 = result_buffer.read_fourier(0)[0].real

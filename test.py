@@ -57,6 +57,19 @@ data_array = np.array(
     ]
 )
 
+arr = tm2d.generate_ctf(
+    (512, 512),
+    1.056,
+    tm2d.CTFParams.like_krios(
+        defocus=12870,
+        B=0,
+        Cs=2.7e7
+    )
+
+)
+
+np.save("arr.npy", arr)
+
 #print("Data array shape:", data_array.shape)
 
 comparator = tm2d.ComparatorCrossCorrelation(

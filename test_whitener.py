@@ -24,7 +24,7 @@ template_buffer = template_atomic.make_template(
 
 template_image_pure = template_buffer.read_real(0)[0]
 
-tu.whiten_buffer(template_buffer, return_filter=True)
+tu.whiten_buffer(template_buffer)
 
 template_image = template_buffer.read_real(0)[0]
 
