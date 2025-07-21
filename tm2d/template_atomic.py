@@ -100,7 +100,8 @@ class TemplateAtomic(Template):
                       ctf_params: CTFParams,
                       template_count: int,
                       cmd_stream: vd.CommandStream,
-                      disable_ctf: bool = False) -> vd.RFFTBuffer:
+                      disable_ctf: bool = False,
+                      debug_here: bool = False) -> vd.RFFTBuffer:
         
         sigma_e = tu.get_sigmaE(ctf_params.HT)
 
@@ -142,6 +143,9 @@ class TemplateAtomic(Template):
 
             vc.mapping_registers()[0].x = value
             vc.mapping_registers()[0].y = 0.0
+
+        if debug_here:
+            return template_buffer
 
         vd.fft.fft(
             template_buffer,

@@ -20,7 +20,8 @@ class Template:
                       ctf_params: CTFParams,
                       template_count: int = 1,
                       cmd_stream: vd.CommandStream = None,
-                      disable_ctf: bool = False) -> vd.RFFTBuffer:
+                      disable_ctf: bool = False,
+                      debug_here: bool = False) -> vd.RFFTBuffer:
         """
         This abstract method should return a buffer containing the sampled and filtered template in real space.   
         """
@@ -33,7 +34,8 @@ class Template:
                       ctf_params: CTFParams = None,
                       template_count: int = 1,
                       cmd_stream: vd.CommandStream = None,
-                      disable_ctf: bool = False) -> vd.RFFTBuffer:
+                      disable_ctf: bool = False,
+                      debug_here: bool = False) -> vd.RFFTBuffer:
         """
         This abstract method should return a buffer containing the sampled and filtered template in real space.   
         """
@@ -62,7 +64,8 @@ class Template:
             ctf_params=ctf_params,
             template_count=template_count,
             cmd_stream=cmd_stream,
-            disable_ctf=disable_ctf
+            disable_ctf=disable_ctf,
+            debug_here=debug_here
         )
     
     def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:

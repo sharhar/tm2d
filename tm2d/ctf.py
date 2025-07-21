@@ -460,4 +460,4 @@ def generate_ctf(box_size: tuple[int, int], pixel_size: float, ctf_params: CTFPa
     )
 
     rctf2 = result_buffer.read_fourier(0)[0].real
-    return np.fft.fftshift(rfft2_to_fft2(rctf2, box_size).real)
+    return np.fft.fftshift(rfft2_to_fft2(rctf2, box_size).real) / 2 # division due to definition of ctf
