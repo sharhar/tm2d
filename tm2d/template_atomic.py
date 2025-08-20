@@ -191,18 +191,18 @@ class TemplateAtomic(Template):
             out_reg = vc.mapping_registers()[0]
             output_buffer[vc.mapping_index() + template_buffer.shape[1] * template_buffer.shape[2] * vc.kernel_index()] = out_reg
 
-        vd.fft.convolve(
-            template_buffer,
-            template_buffer,
-            pixel_size,
-            *ctf_params.get_args(cmd_stream, template_count),
-            kernel_map=ctf_map,
-            axis=1,
-            output_map=output_map_func,
-            kernel_num=template_buffer.shape[0],
-            buffer_shape=(1, *template_buffer.shape[1:]),
-            normalize=False,
-        )
+        # vd.fft.convolve(
+        #     template_buffer,
+        #     template_buffer,
+        #     pixel_size,
+        #     *ctf_params.get_args(cmd_stream, template_count),
+        #     kernel_map=ctf_map,
+        #     axis=1,
+        #     output_map=output_map_func,
+        #     kernel_num=template_buffer.shape[0],
+        #     buffer_shape=(1, *template_buffer.shape[1:]),
+        #     normalize=False,
+        # )
 
         vd.fft.irfft(template_buffer, normalize=False)
 
