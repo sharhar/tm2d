@@ -85,10 +85,22 @@ class TemplateAtomic(Template):
     shape: Tuple[int, int]
     atomic_coords: np.ndarray
     atomic_coords_buffer: vd.Buffer
+    disable_ctf: bool = False
+    disable_convolution: bool = False
+    disable_sigma_e: bool = False
 
-    def __init__(self, shape: Tuple[int, int], atomic_coords: np.ndarray):
+    def __init__(self,
+                 shape: Tuple[int, int],
+                 atomic_coords: np.ndarray,
+                 disable_ctf: bool = False,
+                 disable_convolution: bool = False,
+                 disable_sigma_e: bool = False):
         assert len(shape) == 2, "Shape must be a tuple of two integers (height, width)."
         assert atomic_coords.ndim == 2 and atomic_coords.shape[1] == 3, "Atomic coordinates must be a 2D array with shape (N, 3)."
+
+        self.disable_ctf = disable_ctf
+        self.disable_convolution = disable_convolution
+        self.disable_sigma_e = disable_sigma_e
 
         self.shape = (shape[0], shape[1])
         self.atomic_coords = atomic_coords.astype(np.float32)
@@ -99,8 +111,7 @@ class TemplateAtomic(Template):
                       pixel_size: float,
                       ctf_params: CTFParams,
                       template_count: int,
-                      cmd_stream: vd.CommandStream,
-                      disable_ctf: bool = False) -> vd.RFFTBuffer:
+                      cmd_stream: vd.CommandStream) -> vd.RFFTBuffer:
         
         sigma_e = tu.get_sigmaE(ctf_params.HT)
 
@@ -134,11 +145,23 @@ class TemplateAtomic(Template):
         fill_buffer(template_buffer)
         place_atoms(template_buffer, self.atomic_coords_buffer, rotations, pixel_size)
 
+        my_sigma_e = 1.0 if self.disable_sigma_e else sigma_e
+
+        if self.disable_convolution:
+            @vd.shader("buff.size * 2")
+            def map_int_to_float_shader(buff: Buff[f32]):
+                tid = vc.global_invocation().x
+                buff[tid] = vc.float_bits_to_int(buff[tid]).cast_to(vd.float32) * my_sigma_e
+
+            map_int_to_float_shader(template_buffer)
+
+            return template_buffer
+
         @vd.map_registers([c64])
         def map_int_to_float(buff: Buff[f32]):
             tid = vc.mapping_index()
 
-            value = vc.float_bits_to_int(buff[tid]).cast_to(vd.float32) * sigma_e
+            value = vc.float_bits_to_int(buff[tid]).cast_to(vd.float32) * my_sigma_e
 
             vc.mapping_registers()[0].x = value
             vc.mapping_registers()[0].y = 0.0
@@ -163,7 +186,7 @@ class TemplateAtomic(Template):
                 my_pixel_size
             )
 
-            if disable_ctf:
+            if self.disable_ctf:
                 return
 
             pos_2d = vc.new_vec2()

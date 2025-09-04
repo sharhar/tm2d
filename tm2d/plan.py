@@ -32,8 +32,7 @@ class Template:
                       pixel_size: float,
                       ctf_params: CTFParams = None,
                       template_count: int = 1,
-                      cmd_stream: vd.CommandStream = None,
-                      disable_ctf: bool = False) -> vd.RFFTBuffer:
+                      cmd_stream: vd.CommandStream = None) -> vd.RFFTBuffer:
         """
         This abstract method should return a buffer containing the sampled and filtered template in real space.   
         """
@@ -61,8 +60,7 @@ class Template:
             pixel_size=pixel_size,
             ctf_params=ctf_params,
             template_count=template_count,
-            cmd_stream=cmd_stream,
-            disable_ctf=disable_ctf
+            cmd_stream=cmd_stream
         )
     
     def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:

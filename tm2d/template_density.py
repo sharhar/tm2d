@@ -109,10 +109,12 @@ class TemplateDensity(Template):
     shape: Tuple[int, int]
     density_array: np.ndarray
     density_image: vd.Image3D
+    disable_ctf: bool
 
-    def __init__(self, density_array: np.ndarray, transformed: bool = False):
+    def __init__(self, density_array: np.ndarray, transformed: bool = False, disable_ctf: bool = False):
         assert density_array.ndim == 3, "Density array must be a 3D array."
 
+        self.disable_ctf = disable_ctf
         self.density_array = density_array
 
         if transformed:
@@ -131,8 +133,7 @@ class TemplateDensity(Template):
                     rotations: vc.Var[vc.m4],
                     pixel_size: float,
                     defoci: List[vc.Var[vc.v4]],
-                    ctf_params: CTFParams,
-                    disable_ctf: bool = False) -> vd.RFFTBuffer:
+                    ctf_params: CTFParams) -> vd.RFFTBuffer:
         
         template_buffer_temp = vd.RFFTBuffer((len(defoci), *self.shape))
 
@@ -182,7 +183,7 @@ class TemplateDensity(Template):
 
             for i in range(template_buffer_temp.shape[0]):
                 index = ind + i * template_buffer_temp.shape[1] * template_buffer_temp.shape[2]
-                if disable_ctf:
+                if self.disable_ctf:
                     buff[index] = my_pos.xy
                 else:
                     buff[index] = my_pos.xy * ctf_filter(
