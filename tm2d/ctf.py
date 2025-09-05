@@ -44,7 +44,7 @@ class CTFSet:
     def set_ctf_batch(self,
                       index_arrays: list[np.ndarray],
                       input_array: np.ndarray,
-                      cmd_stream: vd.CommandStream,
+                      cmd_graph: vd.CommandGraph,
                       ctf_batch_size: int,
                       rotations_pixels_batch_size: int,
                       rotations_pixels_count: int,
@@ -59,7 +59,7 @@ class CTFSet:
             for ii, field in enumerate(self.field_names):
                 input_array[:last_index] = self.combinations_array[start_index:end_index, ii]
 
-                cmd_stream.set_var(f"{field}_{batch_id}", np.tile(input_array[:ctf_batch_size], rotations_pixels_batch_size))
+                cmd_graph.set_var(f"{field}_{batch_id}", np.tile(input_array[:ctf_batch_size], rotations_pixels_batch_size))
 
             index_arrays[batch_id][0:last_index] = np.arange(start_index, end_index)
             index_arrays[batch_id][last_index:ctf_batch_size] = -self.get_length() * rotations_pixels_count
@@ -263,7 +263,7 @@ class CTFParams:
         types = [vc.Var[vc.f32] if value is None else vc.Const[vc.f32] for value in values]
         return types
     
-    def get_args(self, cmd_stream: vd.CommandStream, template_count: int):
+    def get_args(self, cmd_graph: vd.CommandGraph, template_count: int):
         args = []
 
         fields = dataclasses.fields(self)
@@ -272,7 +272,7 @@ class CTFParams:
         for batch_id in range(template_count):
             for value, field in zip(values, fields):
                 if value is None:
-                    args.append(cmd_stream.bind_var(f"{field.name}_{batch_id}"))
+                    args.append(cmd_graph.bind_var(f"{field.name}_{batch_id}"))
                 else:
                     args.append(value)
 

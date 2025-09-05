@@ -9,7 +9,7 @@ import tm2d.utilities as tu
 from matplotlib import pyplot as plt
 
 #vd.initialize(debug_mode=True)
-vd.make_context(max_streams=True)
+vd.make_context(multi_device=True, multi_queue=True)
 
 small_region = tm2d.OrientationRegion(
         # symmetry="C1", # This is the default, so we can omit it

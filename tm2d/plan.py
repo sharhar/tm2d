@@ -19,7 +19,7 @@ class Template:
                       pixel_size: float,
                       ctf_params: CTFParams,
                       template_count: int = 1,
-                      cmd_stream: vd.CommandStream = None,
+                      cmd_graph: vd.CommandGraph = None,
                       disable_ctf: bool = False) -> vd.RFFTBuffer:
         """
         This abstract method should return a buffer containing the sampled and filtered template in real space.   
@@ -32,7 +32,7 @@ class Template:
                       pixel_size: float,
                       ctf_params: CTFParams = None,
                       template_count: int = 1,
-                      cmd_stream: vd.CommandStream = None) -> vd.RFFTBuffer:
+                      cmd_graph: vd.CommandGraph = None) -> vd.RFFTBuffer:
         """
         This abstract method should return a buffer containing the sampled and filtered template in real space.   
         """
@@ -60,7 +60,7 @@ class Template:
             pixel_size=pixel_size,
             ctf_params=ctf_params,
             template_count=template_count,
-            cmd_stream=cmd_stream
+            cmd_graph=cmd_graph
         )
     
     def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
@@ -263,15 +263,15 @@ class Plan:
         self.pixel_size = pixel_size
         self.ctf_params = ctf_params
 
-        self.cmd_stream = vd.CommandStream()
+        self.cmd_graph = vd.CommandGraph()
 
-        prev_stream = vd.set_global_cmd_stream(self.cmd_stream)
+        prev_graph = vd.set_global_graph(self.cmd_graph)
 
         self.template_buffer = self.template.make_template(
-            self.cmd_stream.bind_var("rotation_matrix") if self.rotation is None else self.template.get_rotation_matricies(self.rotation),
-            self.cmd_stream.bind_var("pixel_size") if self.pixel_size is None else self.pixel_size,
+            self.cmd_graph.bind_var("rotation_matrix") if self.rotation is None else self.template.get_rotation_matricies(self.rotation),
+            self.cmd_graph.bind_var("pixel_size") if self.pixel_size is None else self.pixel_size,
             template_count=self.template_batch_size,
-            cmd_stream=self.cmd_stream,
+            cmd_graph=self.cmd_graph,
             ctf_params=ctf_params
         )
 
@@ -282,10 +282,10 @@ class Plan:
 
         self.results.check_comparison(
             self.comparison_buffer,
-            *[self.cmd_stream.bind_var(f"index{i}") for i in range(self.template_batch_size)]
+            *[self.cmd_graph.bind_var(f"index{i}") for i in range(self.template_batch_size)]
         )
 
-        vd.set_global_cmd_stream(prev_stream)
+        vd.set_global_graph(prev_graph)
     
     def set_data(self, data: np.ndarray):
         self.comparator.set_data(data)
@@ -338,7 +338,7 @@ class Plan:
             params.ctf_set.set_ctf_batch(
                 ctf_index_arrays,
                 input_array,
-                self.cmd_stream,
+                self.cmd_graph,
                 ctf_batch_size,
                 rotations_pixels_batch_size,
                 params.get_rotation_count() * params.get_pixel_size_count(),
@@ -372,7 +372,7 @@ class Plan:
                         rotations_batch_size
                     )
 
-                    self.cmd_stream.set_var("pixel_size", pixel_sizes_array[:full_batch_size])
+                    self.cmd_graph.set_var("pixel_size", pixel_sizes_array[:full_batch_size])
                 elif params.get_pixel_size_count() == 1:
                     for k in range(self.template_batch_size):
                         index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size]
@@ -394,7 +394,7 @@ class Plan:
                             axis=0
                         )
 
-                        self.cmd_stream.set_var(
+                        self.cmd_graph.set_var(
                             "rotation_matrix", 
                             self.template.get_rotation_matricies(rotations_array[:full_batch_size, :])
                         )
@@ -402,18 +402,12 @@ class Plan:
                     rotation_offset = params.get_ctf_count() * params.get_pixel_size_count() * rotation_index
 
                     for k in range(self.template_batch_size):
-                        self.cmd_stream.set_var(
+                        self.cmd_graph.set_var(
                             f"index{k}",
                             index_arrays[k][:full_batch_size] + rotation_offset
                         )
-
-                        #print(f"Setting index {k} to {index_arrays[k][:full_batch_size] + rotation_offset}")
-
-                    #print(f"Running batch {i} of size {full_batch_size}, pixel size index: {pixel_size_index}, rotation index: {rotation_index}")
-                    #print("Batch size ctf:", ctf_batch_size, "rotations:", actual_rotation_batch_size, "pixels:", actual_pixel_batch_size)
-
-                    # submit the command stream with the current batch size
-                    self.cmd_stream.submit_any(full_batch_size)
+                    
+                    self.cmd_graph.submit_any(full_batch_size)
 
                     if enable_progress_bar:
                         status_bar.update(ctf_count * actual_rotation_batch_size)

@@ -111,7 +111,7 @@ class TemplateAtomic(Template):
                       pixel_size: float,
                       ctf_params: CTFParams,
                       template_count: int,
-                      cmd_stream: vd.CommandStream) -> vd.RFFTBuffer:
+                      cmd_graph: vd.CommandGraph) -> vd.RFFTBuffer:
         
         sigma_e = tu.get_sigmaE(ctf_params.HT)
 
@@ -214,7 +214,7 @@ class TemplateAtomic(Template):
             template_buffer,
             template_buffer,
             pixel_size,
-            *ctf_params.get_args(cmd_stream, template_count),
+            *ctf_params.get_args(cmd_graph, template_count),
             kernel_map=ctf_map,
             axis=1,
             output_map=output_map_func,
