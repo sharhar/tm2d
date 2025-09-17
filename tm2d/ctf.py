@@ -3,6 +3,7 @@ import vkdispatch.codegen as vc
 from vkdispatch.codegen.abreviations import *
 
 import dataclasses
+import json
 
 import itertools
 import numpy as np
@@ -94,6 +95,27 @@ class CTFParams:
     defocus: float
     A_mag: float
     A_ang: float
+    
+    _units = {
+        'HT': ('V', 1.0), # stored in V, show in kV
+        'Cs': ('A', 1.0),
+        'Cc': ('A', 1.0),
+        'energy_spread_fwhm': ('eV', 1.0),
+        'accel_voltage_std': ('dV/V', 1.0),
+        'OL_current_std': ('dI/I', 1.0),
+        'beam_semiangle': ('rad', 1.0),
+        'johnson_std': ('A', 1.0),
+        'B': ('A^2', 1.0),
+        'amp_contrast': ('', 1.0),
+        'zernike': ('deg', 1.0),
+        'lpp': ('deg', 1.0),
+        'NA': ('', 1.0),
+        'f_OL': ('A', 1.0),
+        'lpp_rot': ('deg', 1.0),
+        'defocus': ('A', 1.0),
+        'A_mag': ('A', 1.0),
+        'A_ang': ('deg', 1.0),
+    }
 
     def __init__(self,
                 HT: float = 300e3,
@@ -191,7 +213,7 @@ class CTFParams:
                     lpp: float = 90,
                     NA: float = 0.05,
                     f_OL: float = 14.1e7,
-                    lpp_rot: float = 18,
+                    lpp_rot: float = 0,
                     defocus: float = 10000,
                     A_mag: float = 0,
                     A_ang: float = 0):
@@ -316,6 +338,58 @@ class CTFParams:
             lengths=[len(values_dict[field.name]) for field in dynamic_fields]
         )
 
+    def print(self):
+        fields = dataclasses.fields(self)
+        max_len = max(len(f.name) for f in fields)
+        print('CTF Parameters:')
+        for f in fields:
+            value = getattr(self, f.name)
+            unit, scale = self._units.get(f.name, ('', 1.0))
+            scaled = value * scale
+            print(f'  {f.name:<{max_len}} : {scaled:.6g} {unit}')
+
+    def __str__(self):
+        fields = dataclasses.fields(self)
+        max_len = max(len(f.name) for f in fields)
+        lines = []
+        for f in fields:
+            value = getattr(self, f.name)
+            unit, scale = self._units.get(f.name, ('', 1.0))
+            scaled = value * scale
+            lines.append(f'{f.name:<{max_len}} : {scaled:.6g} {unit}')
+        return '\n'.join(lines)
+
+    def to_dict_with_units(self):
+        result = {}
+        for f in dataclasses.fields(self):
+            value = getattr(self, f.name)
+            unit, scale = self._units.get(f.name, ('', 1.0))
+            result[f.name] = {
+                'value': value * scale,
+                'unit': unit
+            }
+        return result
+
+    def save_to_json(self, file_path: str):
+        import json
+        with open(file_path, 'w') as f:
+            json.dump(self.to_dict_with_units(), f, indent=2)
+
+    @classmethod
+    def load_from_json(cls, file_path: str) -> "CTFParams":
+        import json
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+
+        kwargs = {}
+        for field in dataclasses.fields(cls):
+            entry = data[field.name]
+            value = entry['value']
+            _, scale = cls._units.get(field.name, ('', 1.0))
+            kwargs[field.name] = value / scale
+
+        return cls(**kwargs)
+
 def ctf_filter(
         buffer_shape: tuple[int, int],
         pos_2d: vc.ShaderVariable,
@@ -388,8 +462,13 @@ def ctf_filter(
     E_JN = vc.exp(-2 * np.pi * np.pi * johnson_std*johnson_std * Sr_2).copy()
     E_BF = vc.exp(-0.25 * params.B * Sr_2).copy() if not disable_B_factor else 1.0
 
-    CTF = (2 * E_TC * E_SC * E_JN * E_BF * sinchi).copy()
-
+    CTF = (2 * E_TC * E_SC * E_JN * E_BF * sinchi).copy() # technically 2 * ctf
+    
+    is_dc = vc.logical_and(Sx == 0.0, Sy == 0.0)
+    vc.if_statement(is_dc)
+    CTF[:] = 0.0 # set CTF(0)
+    vc.end()
+    
     return CTF
 
 def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel_size: float):
@@ -455,9 +534,9 @@ def generate_ctf(box_size: tuple[int, int], pixel_size: float, ctf_params: CTFPa
 
     apply_ctf_to_rfft_buffer(
         result_buffer,
-        ctf_params if ctf_params is not None else get_ctf_params_set('krios'),
+        ctf_params if ctf_params is not None else CTFParams(),
         pixel_size
     )
 
     rctf2 = result_buffer.read_fourier(0)[0].real
-    return np.fft.fftshift(rfft2_to_fft2(rctf2, box_size).real)
+    return np.fft.fftshift(rfft2_to_fft2(rctf2, box_size).real) / 2 # division due to definition of ctf

@@ -50,7 +50,7 @@ def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
 def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):
     buf[vc.global_invocation().x] = val
 
-def gaussian_filter(buffer_shape: tuple[int, int], tid: vc.ShaderVariable, pixel_size: float, A: float = 114.0):
+def gaussian_filter(buffer_shape: tuple[int, int], tid: vc.ShaderVariable, pixel_size: float, A: float = 100.0):
     pix_size_sq = pixel_size * pixel_size
     
     amp = A / pix_size_sq

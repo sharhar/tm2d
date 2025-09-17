@@ -22,7 +22,7 @@ from .orientation_sampling import make_orientations_array
 from .utilities.file_loading import load_coords_from_npz as load_coords
 from .utilities.file_loading import load_density_from_mrc as load_template_array
 
-from .simulators.image import simulate_pdf
+from .simulators.image import get_pdf
 from .simulators.image import get_im_from_pdf
 
 from .plan import Plan, Template, Comparator, Results, ParamSet

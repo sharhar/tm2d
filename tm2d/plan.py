@@ -25,7 +25,7 @@ class Template:
         This abstract method should return a buffer containing the sampled and filtered template in real space.   
         """
         
-        raise NotImplementedError("get_template must be implemented in a subclass.")
+        raise NotImplementedError("make_template must be implemented in a subclass.")
     
     def make_template(self,
                       rotations: Union[vc.Var[vc.m4], List[int], np.ndarray],

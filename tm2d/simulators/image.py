@@ -10,26 +10,15 @@ from typing import Tuple
 
 from ..ctf import CTFParams
 
-def simulate_pdf(
-        template: Template,
-        rotation: Tuple[float, float, float],
-        defocus: float,
-        pixel_size: float,
-        ctf_params: CTFParams = None,
-        ) -> np.ndarray:
-    """
-    Simulate a power density function (PDF) for a given template, rotation, defocus, and pixel size.
-    """
-
-    if ctf_params is None:
-        ctf_params = CTFParams()
-    
-    return template.make_template(
-        template.get_rotation_matricies(np.array([rotation])),
-        [defocus, 0, 0, 0],
-        pixel_size,
-        ctf_params
-    ).read_real(0)
+def get_pdf(template_atomic, rotation, pixel_size, ctf_params, thickness_A=0):
+    template = template_atomic.make_template(
+        rotations=rotation,
+        pixel_size=pixel_size,
+        ctf_params=ctf_params
+    )
+    im0 = template.read_real(0)[0]
+    im1 = im0 + 1 # set baseline to 1
+    return im1 * np.exp(-1 * thickness_A / 3000) # apply simple inelastic scattering model
 
 def get_im_from_pdf(pdf, dose_per_A2, pix_size, snr=1):
     dose_per_pix = tu.optics_functions.dose_A2ToPix(dose_per_A2, pix_size)
