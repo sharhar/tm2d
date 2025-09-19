@@ -3,83 +3,159 @@ import vkdispatch as vd
 import vkdispatch.codegen as vc
 from vkdispatch.codegen.abreviations import *
 
+def freq_axes(shape: tuple, pixel_size: float = None):
+    if pixel_size is None:
+        pixel_size = 1.0
+    srow = np.fft.fftshift(np.fft.fftfreq(shape[0], d=pixel_size))
+    scol = np.fft.fftshift(np.fft.fftfreq(shape[1], d=pixel_size))
+    return srow, scol
 
-def create_circle_array(N, r):
+def radius_grid(srow: np.ndarray, scol: np.ndarray):
+    sr, sc = np.meshgrid(srow, scol, indexing='ij')
+    return np.sqrt(sr * sr + sc * sc)
+
+def radial_bins_linear(s_nyq: float, nfreq: int):
+    return np.linspace(0.0, s_nyq, nfreq)
+
+def annulus_bins(srad: np.ndarray, srad_ax: np.ndarray):
     """
-    Create a numpy array of shape (N, N) with a circle of ones within radius r*N/2 centered at the array's center.
-
-    Parameters:
-    N (int): Size of the array.
-    r (float): Radius of the circle as a fraction of N/2.
-
-    Returns:
-    numpy.ndarray: Array with a circle of ones and zeros elsewhere.
+    Map each pixel's radius to a bin index for annulus averaging.
+    Bin edges are centered on srad_ax samples.
     """
-    # Ensure r is between 0 and 1
-    if not (0 <= r <= 1):
-        raise ValueError("r must be between 0 and 1")
+    nfreq = srad_ax.size
+    s_nyq = srad_ax[-1] if nfreq == 1 else srad_ax[-1]
+    # interior edges at midpoints, plus 0 and last+step for right edge
+    last_step = (srad_ax[-1] - srad_ax[-2]) if nfreq > 1 else (s_nyq / max(nfreq, 1))
+    edges = np.concatenate([[0.0], 0.5 * (srad_ax[1:] + srad_ax[:-1]), [srad_ax[-1] + last_step]])
+    idx = np.searchsorted(edges, srad, side="right") - 1
+    return np.clip(idx, 0, nfreq - 1)
 
-    # Create a grid of x, y coordinates
-    y, x = np.ogrid[-N/2:N/2, -N/2:N/2]
-    # Define the circle mask
-    mask = x**2 + y**2 <= (r*N/2)**2
+def azimuthal_average_from_radius(arr2d: np.ndarray, srad: np.ndarray, nfreq: int):
+    """Azimuthal average of a 2D array using annulus binning on a provided radius map."""
+    s_nyq = np.max(srad)
+    srad_ax = radial_bins_linear(s_nyq, nfreq)
 
-    # Create the array
-    array = np.zeros((N, N))
-    array[mask] = 1
-    return array
+    idx = annulus_bins(srad, srad_ax)
+    counts = np.bincount(idx.ravel(), minlength=nfreq)
+    sums = np.bincount(idx.ravel(), weights=arr2d.ravel(), minlength=nfreq)
+    avg1d = np.divide(sums, counts, out=np.zeros_like(sums, dtype=float), where=counts > 0)
 
-def get_psd(im, pad_factor=0, normalize=True):
-    im_pad = np.pad(im, pad_factor * im.shape[0], mode='constant')
-    im_pad_ft = np.fft.fftshift(np.fft.fft2(im_pad))
-    psd_pad = np.abs(im_pad_ft)**2
-    if normalize:
-        psd_pad /= im.size**2 # account for array size
-    return psd_pad
+    # evaluate the 1d curve onto the 2d grid
+    avg2d = np.interp(srad, srad_ax, avg1d, left=avg1d[0], right=avg1d[-1])
 
-def get_stats_from_psd(psd, pad_factor=0, normalized=True):
-    if not normalized:
-        psd /= (psd.size / (2 * pad_factor + 1)**2)**2 # account for array size
-    im_mean = np.sqrt(psd[psd.shape[0] // 2, psd.shape[1] // 2])
-    im_var = psd.sum() / (2 * pad_factor + 1)**2  - im_mean**2
-    return (im_mean, im_var)
+    return srad_ax, avg1d, avg2d
 
-def whiten_image(im, normalize=True, azim_avg=True, return_filter=False):
-    psd = get_psd(im)
-    if azim_avg:
-        (_, _, psd) = get_azim_avg(psd) # azimuthally average
+def azimuthal_average(arr2d: np.ndarray, nfreq: int = 512, pixel_size: float = None):
+    """Wrapper for azimuthal_average_from_radius."""
+    srow, scol = freq_axes(arr2d.shape, pixel_size)
+    srad = radius_grid(srow, scol)
+    srad_ax, avg1d, avg2d = azimuthal_average_from_radius(arr2d, srad, nfreq)
+    avg1d = np.nan_to_num(avg1d, copy=False)
+    avg2d = np.nan_to_num(avg2d, copy=False)
+    return srad_ax, avg1d, avg2d, srow, scol
+
+def raised_cosine_taper(srad: np.ndarray, s_nyq: float, r0_frac: float, r1_frac: float):
+    """
+    Low-frequency raised-cosine taper.
+    r0_frac, r1_frac are fractions of nyquist.
+    """
+    r0 = r0_frac * s_nyq
+    r1 = r1_frac * s_nyq
+    if r1 <= r0:
+        return np.ones_like(srad)
+    t = np.clip((srad - r0) / (r1 - r0), 0.0, 1.0)
+    return 0.5 - 0.5 * np.cos(np.pi * t)
+
+def get_psd2d(im: np.ndarray, pad_factor: int = 0):
+    """Energy-preserving 2d psd with optional zero-padding."""
+    pad = int(pad_factor * max(im.shape))
+    im_pad = np.pad(im, ((pad, pad), (pad, pad)), mode='constant') if pad > 0 else im
+    im_ft = np.fft.fftshift(np.fft.fft2(im_pad))
+    return np.abs(im_ft)**2 / im_pad.size
+
+def get_psd_all(im: np.ndarray, pixel_size: float | None = None, nfreq: int = 512, pad_factor: int = 0):
+    """Energy-preserving 2d psd and azimuthal averages (annulus binning)."""
+    psd2d = get_psd2d(im, pad_factor=pad_factor)
+    srad_ax, psd1d, psd1d2d, srow, scol = azimuthal_average(psd2d, nfreq=nfreq, pixel_size=pixel_size)
+    # hygiene
+    psd2d   = np.nan_to_num(psd2d, copy=False)
+    psd1d   = np.nan_to_num(psd1d, copy=False)
+    psd1d2d = np.nan_to_num(psd1d2d, copy=False)
+    return psd2d, srad_ax, psd1d, psd1d2d, srow, scol
+
+def get_psd_stats(psd2d: np.ndarray):
+    """Recover |mean| and population variance from an energy-preserving, fftshifted PSD."""
+    energy = float(np.sum(psd2d))
+    mean_sq = float(psd2d[psd2d.shape[0] // 2, psd2d.shape[1] // 2]) / psd2d.size
+    var = float(np.sum(psd2d)) / psd2d.size - mean_sq # (mean of squares) - (square of mean)
+    var = max(var, 0.0)  # avoid round-off negatives
+    mean_abs = float(np.sqrt(max(mean_sq, 0.0)))
+    return mean_abs, var
+
+def apply_fourier_filt2d(im: np.ndarray, filt2d: np.ndarray):
+    """Apply a provided 2d filter in fourier space (fftshifted)."""
     im_ft = np.fft.fftshift(np.fft.fft2(im))
-    filt = np.sqrt(1 / psd)
-    if normalize:
-        filt /= np.sqrt(im.size - 1) # variance=1
-    im = np.real(np.fft.ifft2(np.fft.ifftshift(im_ft * filt)))
-    if normalize:
-        im -= im.mean() # mean=0
-        filt[filt.shape[0] // 2, filt.shape[1] // 2] = 0 # remove dc
-    if return_filter:
-        return (im, filt)
-    else:
-        return im
+    im_ft_filt = im_ft * filt2d
+    im_filt = np.real(np.fft.ifft2(np.fft.ifftshift(im_ft_filt)))
+    return im_filt
 
-def get_azim_avg(arr, delta=1):
-    ny, nx = arr.shape
-    y, x = np.indices((ny, nx))
-    center_y, center_x = ny // 2, nx // 2
-    r = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
-    r_flat = r.flatten()
-    array_flat = arr.flatten()
-    r_sorted_indices = np.argsort(r_flat)
-    r_sorted = r_flat[r_sorted_indices]
-    array_sorted = array_flat[r_sorted_indices]
-    r_unique, r_start_indices = np.unique(r_sorted, return_index=True)
-    r_end_indices = np.roll(r_start_indices, -1)
-    r_end_indices[-1] = len(r_sorted)
-    azimuthal_avg_1d = np.array([
-        array_sorted[start:end].mean() for start, end in zip(r_start_indices, r_end_indices)
-    ])
-    azimuthal_avg_2d = np.interp(r_flat, r_unique, azimuthal_avg_1d).reshape(arr.shape)
-    r_axis = r_unique * delta # delta adds units to the axis
-    return (r_axis, azimuthal_avg_1d, azimuthal_avg_2d)
+def build_whitening_filter(
+    psd2d: np.ndarray,
+    srow: np.ndarray,
+    scol: np.ndarray,
+    nfreq: int = 1024,
+    eps: float = 1e-10,
+    r0_frac: float = 0.0,
+    r1_frac: float = 2e-2,
+    mode: str = '1d',
+    double_whiten: bool = False,
+):
+    """
+    Construct a whitening filter from a psd.
+      mode:
+        - '1d' -> azimuthal average, then evaluate back on grid
+        - '2d' -> use full 2d psd as-is
+      double_whiten:
+        - False: 1/sqrt(psd)
+        - True: 1/psd
+    """
+    srad = radius_grid(srow, scol)
+    s_nyq = min(np.max(np.abs(srow)), np.max(np.abs(scol)))
+    if mode == '2d':
+        psd_map = psd2d
+    elif mode == '1d':
+        _, _, psd_map = azimuthal_average_from_radius(psd2d, srad, nfreq)
+
+    taper = raised_cosine_taper(srad, s_nyq, r0_frac, r1_frac)
+    base = np.maximum(psd_map, eps)
+    filt = taper / (base if double_whiten else np.sqrt(base))
+    return filt
+
+def whiten_image(
+    im: np.ndarray,
+    pixel_size: float | None = None,
+    nfreq: int = 1024,
+    eps: float = 1e-10,
+    r0_frac: float = 0.0,
+    r1_frac: float = 0.02,
+    mode: str = "1d",            # '1d' or '2d'
+    double_whiten: bool = False,
+    return_filter: bool = False,
+):
+    """
+    Whiten an image in fourier space using either a 1d (azimuthally-averaged) or 2d psd.
+    - pixel_size=None gives index units (no physical scaling needed for averaging).
+    """
+    psd2d = get_psd2d(im)
+    srow, scol = freq_axes(im.shape, pixel_size)
+
+    filt2d = build_whitening_filter(
+        psd2d, srow, scol, nfreq=nfreq, eps=eps,
+        r0_frac=r0_frac, r1_frac=r1_frac,
+        mode=mode, double_whiten=double_whiten
+    )
+    im_filt = apply_fourier_filt2d(im, filt2d)
+    return (im_filt, filt2d) if return_filter else im_filt
 
 def read_pixel(buff: Buff[c64],
                x_ind: vc.ShaderVariable,

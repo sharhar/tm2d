@@ -2,15 +2,19 @@ import vkdispatch as vd
 import tm2d
 import numpy as np
 
-import sys
+import os
 
 import tm2d.utilities as tu
 
 from matplotlib import pyplot as plt
 
+protein_file_dir = '/home/ppetrov/GitHub/TEM_LPP_Image_Simulator/NPZs'
+protein_file_name = '6z6u_apoferritin.npz'
+protein_fpath = os.path.join(protein_file_dir, protein_file_name)
+
 template_atomic = tm2d.TemplateAtomic(
     (512, 512),
-    tu.load_coords_from_npz("data/parsed_5lks_LSU.npz")
+    tu.load_coords_from_npz(protein_fpath)
 )
 
 template_buffer = template_atomic.make_template(
