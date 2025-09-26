@@ -92,6 +92,12 @@ def get_psd_stats(psd2d: np.ndarray):
     mean_abs = float(np.sqrt(max(mean_sq, 0.0)))
     return mean_abs, var
 
+def get_hpf(shape: tuple, pixel_size: float, cuton_start: float, cuton_end: float):
+    srow, scol = freq_axes(shape, pixel_size)
+    srad = radius_grid(srow, scol)
+    s_nyq = 0.5 / pixel_size
+    return raised_cosine_taper(srad, s_nyq, r0_frac=cuton_start / s_nyq, r1_frac=cuton_end / s_nyq)
+
 def apply_fourier_filt2d(im: np.ndarray, filt2d: np.ndarray):
     """Apply a provided 2d filter in fourier space (fftshifted)."""
     im_ft = np.fft.fftshift(np.fft.fft2(im))
@@ -138,7 +144,7 @@ def whiten_image(
     eps: float = 1e-10,
     r0_frac: float = 0.0,
     r1_frac: float = 0.02,
-    mode: str = "1d",            # '1d' or '2d'
+    mode: str = '1d',
     double_whiten: bool = False,
     return_filter: bool = False,
 ):
