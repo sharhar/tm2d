@@ -137,6 +137,21 @@ def build_whitening_filter(
     filt = taper / (base if double_whiten else np.sqrt(base))
     return filt
 
+def high_pass_filter_image(
+    im: np.ndarray,
+    pixel_size: float,
+    cuton_start: float,
+    cuton_end: float,
+    return_filter: bool = False,
+):
+    """
+    High-pass filter an image in fourier space using a raised-cosine taper.
+    - cuton_start, cuton_end are in [1/A]
+    """
+    hpf = get_hpf(im.shape, pixel_size, cuton_start, cuton_end)
+    im_filt = apply_fourier_filt2d(im, hpf)
+    return im_filt, hpf if return_filter else im_filt
+
 def whiten_image(
     im: np.ndarray,
     pixel_size: float | None = None,

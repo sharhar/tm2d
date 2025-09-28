@@ -9,33 +9,81 @@ def normalize_image(im, n_std=5, remove_outliers=True):
         im_ref[outliers_idxs] = im_ref.mean()
     return (im_ref - im_ref.mean()) / im_ref.std()
 
-def downsample_image(im, N, rescale=False):
-    M = im.shape[0] # assume square!
-    im_ft = np.fft.fftshift(np.fft.fft2(im)) # fft2
+def downsample_image(
+    im: np.ndarray,
+    N: int,
+    conserve: str | None = 'match_sum',  # 'match_sum' | 'theoretical' | None
+    gaussian_std: float | None = None, # frequency-pixel sigma for soft edge
+    norm_ortho: bool = False
+) -> np.ndarray:
+    """
+    Fourier downsampling for square 2D images with optional antialiasing and sum conservation.
 
-    # get center indices of fft2
-    M_center = M // 2
-    N_center = N // 2
+    Parameters
+    ----------
+    im : np.ndarray
+        2D real array (H, W). Must be square.
+    N : int
+        Target side length (N x N).
+    rescale : bool
+        Legacy alias: if True and conserve is None, uses 'match_sum'.
+    conserve : str or None
+        'match_sum'     -> scale so sum(out) == sum(in)
+        'theoretical'   -> scale by (N/M)^2 (continuous integral view)
+        None            -> no scaling
+    gaussian_std : float or None
+        If set, multiplies cropped spectrum by a centered gaussian (reduces ringing).
+    norm_ortho : bool
+        If True, use norm='ortho' in FFTs.
 
-    # get cropping ranges
-    if N % 2 == 0:
-        start_M = M_center - N_center
-        end_M = M_center + N_center
-    else:
-        start_M = M_center - N_center
-        end_M = M_center + N_center + 1
+    Returns
+    -------
+    np.ndarray
+        Real-valued (N, N) array.
+    """
+    def _center_slice(M, N):
+        cM = M // 2
+        cN = N // 2
+        return slice(cM - cN, cM + cN) if N % 2 == 0 else slice(cM - cN, cM + cN + 1)
+    
+    im = np.asarray(im)
 
-    im_ft_crop = im_ft[start_M:end_M, start_M:end_M] # crop the fourier transform
-    im_ds = np.fft.ifft2(np.fft.ifftshift(im_ft_crop)) # invert fft2
-    im_ds_real = np.real(im_ds) # get real part
+    _norm = 'ortho' if norm_ortho else None
 
-    # rescale to keep number of electrons constant
-    if rescale:
-        im_ds_real_sum = im_ds_real.sum()
-        if im_ds_real_sum != 0:
-            im_ds_real *= im.sum() / im_ds_real_sum
+    # forward fft (centered)
+    im_ft = np.fft.fftshift(np.fft.fft2(im, norm=_norm))
 
-    return im_ds_real
+    # center crop in frequency
+    sl = _center_slice(im.shape[0], N)
+    im_ft_crop = im_ft[sl, sl]
+
+    # (optional) soft gaussian edge in frequency
+    if gaussian_std is not None and gaussian_std > 0:
+        yy, xx = np.ogrid[:N, :N]
+        cy = N // 2
+        cx = N // 2
+        r2 = (yy - cy)**2 + (xx - cx)**2
+        g = np.exp(-0.5 * r2 / (gaussian_std**2))
+        im_ft_crop = im_ft_crop * g
+
+    # inverse fft and real part
+    im_ds = np.fft.ifft2(np.fft.ifftshift(im_ft_crop), norm=_norm).real
+
+    # sum conservation
+    if conserve:
+        src_sum = float(im.sum())
+        dst_sum = float(im_ds.sum())
+        if dst_sum != 0.0:
+            if conserve == 'match_sum':
+                im_ds *= (src_sum / dst_sum)
+            elif conserve == 'theoretical':
+                s = N / im.shape[0]
+                target_sum = src_sum * (s**2)
+                im_ds *= (target_sum / dst_sum)
+            else:
+                raise ValueError("conserve must be 'match_sum', 'theoretical', or None.")
+
+    return im_ds
 
 def process_raw_micrograph(
         data: np.ndarray, 
