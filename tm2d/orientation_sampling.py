@@ -17,8 +17,8 @@ class OrientationRegion:
                  phi_max: float = 360,
                  theta_min: float = 0,
                  theta_max: float = 180,
-                 psi_min: float = 0,
-                 psi_max: float = 360) -> None:
+                 psi_min: float = -180,
+                 psi_max: float = 180) -> None:
         self.symmetry = symmetry
         self.phi_min = phi_min
         self.phi_max = phi_max
