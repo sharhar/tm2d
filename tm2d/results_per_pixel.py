@@ -84,7 +84,7 @@ class ResultsPixel(Results):
 
         self.compiled = False
 
-    def compile_results(self):
+    def compile_results(self, optimize_by='mip'):
         max_crosses = self.max_cross.read()
         best_indicies = self.best_index.read()
         sum_crosses = self.sum_cross.read()
@@ -144,8 +144,14 @@ class ResultsPixel(Results):
         self.compiled_index_of_params_match = []
 
         for i in range(self.count):
-            self.compiled_location_of_best_match.append(np.unravel_index(np.argmax(self.compiled_mip[i]), self.compiled_mip.shape[1:]))
-            self.compiled_index_of_params_match.append(self.compiled_best_index_array[i][self.compiled_location_of_best_match[i]])
+            if optimize_by == 'mip':
+                self.compiled_location_of_best_match.append(np.unravel_index(np.argmax(self.compiled_mip[i]), self.compiled_mip.shape[1:]))
+                self.compiled_index_of_params_match.append(self.compiled_best_index_array[i][self.compiled_location_of_best_match[i]])
+            elif optimize_by == 'z_score':
+                self.compiled_location_of_best_match.append(np.unravel_index(np.argmax(self.compiled_z_score[i]), self.compiled_z_score.shape[1:]))
+                self.compiled_index_of_params_match.append(self.compiled_best_index_array[i][self.compiled_location_of_best_match[i]])
+            else:
+                raise ValueError("Invalid optimize_by value. Must be 'mip' or 'z_score'.")
 
 
         self.compiled = True

@@ -193,7 +193,7 @@ class ParamSet:
 
         initial_values_shape = (
             *tensor_shape[:prefix_count],
-            np.prod(tensor_shape[prefix_count:-1]),
+            int(np.prod(tensor_shape[prefix_count:-1])),
             tensor_shape[-1]
         )
 
