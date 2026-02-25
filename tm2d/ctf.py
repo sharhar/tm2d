@@ -423,15 +423,15 @@ def ctf_filter(
     A2_ang = params.A_ang # [deg]
     A2_ang_rad = np.pi / 180 * A2_ang # [rad]
 
-    wave_shape = vc.new_uvec2()
+    wave_shape = vc.new_uvec2_register()
     wave_shape.x = buffer_shape[0]
     wave_shape.y = buffer_shape[1] * 2 - 2
 
-    Sx = (pos_2d.y/(wave_shape.y * pixel_size)).copy()
-    Sy = (-pos_2d.x/(wave_shape.x * pixel_size)).copy()
+    Sx = (pos_2d.y/(wave_shape.y * pixel_size)).to_register()
+    Sy = (-pos_2d.x/(wave_shape.x * pixel_size)).to_register()
 
-    Sr_2 = (Sx*Sx + Sy*Sy).copy()
-    Sa = vc.atan2(Sy, Sx).copy()
+    Sr_2 = (Sx*Sx + Sy*Sy).to_register()
+    Sa = vc.atan2(Sy, Sx).to_register()
     
     wlen_2 = wlen*wlen
 
@@ -439,7 +439,7 @@ def ctf_filter(
 
     defocus = params.defocus
 
-    gamma = np.pi*wlen*Sr_2*((CWS*0.5) - defocus - A2_mag*vc.cos(2*(Sa - A2_ang_rad))).copy()
+    gamma = np.pi*wlen*Sr_2*((CWS*0.5) - defocus - A2_mag*vc.cos(2*(Sa - A2_ang_rad))).to_register()
 
     # zernike phase plate
     eta_z = -np.pi / 180 * zernike
@@ -456,13 +456,13 @@ def ctf_filter(
     # total phase plate phase
     eta = eta_z + eta_l
 
-    sinchi = vc.sin(eta + gamma - amp_contrast).copy()
-    E_TC = vc.exp(-0.5 * sigma_f * sigma_f * np.pi * np.pi * wlen_2 * Sr_2 * Sr_2).copy()
-    E_SC = vc.exp(-2 * sigma_beta * sigma_beta * np.pi * np.pi * Sr_2 * (CWS - defocus)*(CWS - defocus)).copy()
-    E_JN = vc.exp(-2 * np.pi * np.pi * johnson_std*johnson_std * Sr_2).copy()
-    E_BF = vc.exp(-0.25 * params.B * Sr_2).copy() if not disable_B_factor else 1.0
+    sinchi = vc.sin(eta + gamma - amp_contrast).to_register()
+    E_TC = vc.exp(-0.5 * sigma_f * sigma_f * np.pi * np.pi * wlen_2 * Sr_2 * Sr_2).to_register()
+    E_SC = vc.exp(-2 * sigma_beta * sigma_beta * np.pi * np.pi * Sr_2 * (CWS - defocus)*(CWS - defocus)).to_register()
+    E_JN = vc.exp(-2 * np.pi * np.pi * johnson_std*johnson_std * Sr_2).to_register()
+    E_BF = vc.exp(-0.25 * params.B * Sr_2).to_register() if not disable_B_factor else 1.0
 
-    CTF = (2 * E_TC * E_SC * E_JN * E_BF * sinchi).copy() # technically 2 * ctf
+    CTF = (2 * E_TC * E_SC * E_JN * E_BF * sinchi).to_register() # technically 2 * ctf
     
     is_dc = vc.logical_and(Sx == 0.0, Sy == 0.0)
     vc.if_statement(is_dc)
@@ -473,22 +473,21 @@ def ctf_filter(
 
 def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel_size: float):
     #@vd.shader(exec_size=lambda args: args.buff.size)
-    with vc.builder_context() as builder:
-        signature = vd.ShaderSignature.from_type_annotations(
-            builder,
-            [Buff[c64]] + ctf_params.get_type_list(),
-        )
+    with vd.shader_context() as ctx:
+        shader_args = ctx.declare_input_arguments([Buff[c64]] + ctf_params.get_type_list())
 
-        buff = signature.get_variables()[0]
+        buff = shader_args[0]
         shader_ctf_params = ctf_params.assemble_params_list_from_args(
-            signature.get_variables()[1:], 1
+            shader_args[1:], 1
         )[0]
 
-        ind = vc.global_invocation().x.copy()
+        ind = vc.global_invocation_id().x.to_register()
 
-        pos_2d = vc.new_vec2()
-        pos_2d.x = ind % buffer.shape[2]
-        pos_2d.y = ((ind / buffer.shape[2]) + buffer.shape[1] // 2) % buffer.shape[1]
+        ipos_2d = vc.new_uvec2_register()
+        ipos_2d.x[:] = ind % buffer.shape[2]
+        ipos_2d.y[:] = ((ind // buffer.shape[2]) + buffer.shape[1] // 2) % buffer.shape[1]
+
+        pos_2d = ipos_2d.to_dtype(vc.v2).to_register()
         pos_2d.y = pos_2d.y - buffer.shape[1] // 2
 
         buff[ind] *= ctf_filter(
@@ -498,9 +497,7 @@ def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel
             pixel_size
         )
 
-        ctf_apply_shader = vd.ShaderObject(
-            builder.build("apply_ctf_to_rfft_buffer"), 
-            signature,
+        ctf_apply_shader = ctx.get_function(
             exec_count=buffer.size
         )
 

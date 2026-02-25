@@ -182,10 +182,10 @@ def read_pixel(buff: Buff[c64],
                x_ind: vc.ShaderVariable,
                y_ind: vc.ShaderVariable,
                batch_index: vc.ShaderVariable):
-    result = vc.new_vec2(0.0)
+    result = vc.new_vec2_register(0.0)
 
     vc.if_all(x_ind >= 0, y_ind >= 0, x_ind < buff.shape[2], y_ind < buff.shape[1])
-    result[:] = buff[batch_index * buff.shape[2] * buff.shape[1] + y_ind * buff.shape[2] + x_ind]
+    result[:] = buff[batch_index * buff.shape[2] * buff.shape[1] + y_ind * buff.shape[2] + x_ind].to_dtype(vc.v2)
     vc.end()
 
     return result
@@ -195,11 +195,11 @@ def interp_pixel(
         x_coord: vc.ShaderVariable,
         y_coord: vc.ShaderVariable,
         batch_index: vc.ShaderVariable):
-    x_ind0 = vc.floor(x_coord).cast_to(vc.i32)
-    y_ind0 = vc.floor(y_coord).cast_to(vc.i32)
+    x_ind0 = vc.floor(x_coord).to_dtype(vc.i32)
+    y_ind0 = vc.floor(y_coord).to_dtype(vc.i32)
 
-    x_ind1 = vc.ceil(x_coord).cast_to(vc.i32)
-    y_ind1 = vc.ceil(y_coord).cast_to(vc.i32)
+    x_ind1 = vc.ceil(x_coord).to_dtype(vc.i32)
+    y_ind1 = vc.ceil(y_coord).to_dtype(vc.i32)
 
     value00 = read_pixel(buff, x_ind0, y_ind0, batch_index)
     value01 = read_pixel(buff, x_ind0, y_ind1, batch_index)
@@ -212,26 +212,26 @@ def interp_pixel(
     r1 = value00 * (1 - dx) + value10 * dx
     r2 = value01 * (1 - dx) + value11 * dx
 
-    interpolated_value = vc.new_vec2(r1 * (1 - dy) + r2 * dy)
+    interpolated_value = vc.new_vec2_register(r1 * (1 - dy) + r2 * dy)
 
     return interpolated_value.x * interpolated_value.x + interpolated_value.y * interpolated_value.y
 
-@vd.map_reduce(reduction=vd.SubgroupMin, axes=[2, ])
+@vd.reduce.map_reduce(reduction=vd.reduce.SubgroupMin, axes=[2, ])
 def azimuthal_sum(buff: Buff[c64]) -> vc.f32:
-    ind = vc.mapping_index()
+    ind = vd.reduce.mapped_io_index()
 
     template_index = ind % (buff.shape[2] * buff.shape[1])
-    batch_index = ind / (buff.shape[2] * buff.shape[1])
+    batch_index = ind // (buff.shape[2] * buff.shape[1])
 
-    radius_index = vc.new_float(template_index / buff.shape[2])
+    radius_index = vc.new_float_register(template_index / buff.shape[2])
 
-    result_value = vc.new_float(0.0)
+    result_value = vc.new_float_register(0.0)
 
     vc.if_statement(radius_index < buff.shape[2])
-    angle_index = vc.new_float(np.pi/2 - (np.pi * (template_index % buff.shape[2])) / buff.shape[2])
+    angle_index = vc.new_float_register(np.pi/2 - (np.pi * (template_index % buff.shape[2])) / buff.shape[2])
 
-    x_coord = vc.new_float(radius_index * vc.cos(angle_index))
-    y_coord = vc.new_float(radius_index * vc.sin(angle_index))
+    x_coord = vc.new_float_register(radius_index * vc.cos(angle_index))
+    y_coord = vc.new_float_register(radius_index * vc.sin(angle_index))
 
     vc.if_statement(y_coord < 0)
     y_coord += buff.shape[1]  # Adjust y_coord to be positive
@@ -244,24 +244,24 @@ def azimuthal_sum(buff: Buff[c64]) -> vc.f32:
 
 @vd.shader("buff.size")
 def apply_whiten_filter(buff: Buff[c64], sums_buffer: Buff[f32], return_filter: Const[i32] = 0):
-    ind = vc.global_invocation().x
+    ind = vc.global_invocation_id().x
 
     template_index = ind % (buff.shape[2] * buff.shape[1])
-    batch_index = ind / (buff.shape[2] * buff.shape[1])
+    batch_index = ind // (buff.shape[2] * buff.shape[1])
 
-    x_index = template_index / buff.shape[2]
+    x_index = template_index // buff.shape[2]
     y_index = template_index % buff.shape[2]
 
-    radius0 = vc.new_float(vc.sqrt(x_index * x_index + y_index * y_index))
+    radius0 = vc.new_float_register(vc.sqrt(x_index * x_index + y_index * y_index))
 
     x_index = buff.shape[1] - x_index
 
-    radius1 = vc.new_float(vc.sqrt(x_index * x_index + y_index * y_index))
+    radius1 = vc.new_float_register(vc.sqrt(x_index * x_index + y_index * y_index))
 
     true_radius = vc.min(radius0, radius1)
 
-    rad_floor = vc.floor(true_radius).cast_to(vc.i32)
-    rad_ceil = vc.ceil(true_radius).cast_to(vc.i32)
+    rad_floor = vc.floor(true_radius).to_dtype(vc.i32)
+    rad_ceil = vc.ceil(true_radius).to_dtype(vc.i32)
 
     value_floor = sums_buffer[rad_floor + batch_index * buff.shape[1]] / buff.shape[2]
     value_ceil = sums_buffer[rad_ceil + batch_index * buff.shape[1]] / buff.shape[2]
@@ -269,17 +269,18 @@ def apply_whiten_filter(buff: Buff[c64], sums_buffer: Buff[f32], return_filter: 
     drad = true_radius - rad_floor
     psd = value_floor * (1 - drad) + value_ceil * drad
 
-    filter_value = vc.new_vec2(0.0)
+    filter_value = vc.new_complex64_register(0.0)
 
     vc.if_statement(psd > 1e-10)
-    filter_value.x = vc.sqrt(1 / psd)
-    filter_value.y = filter_value.x
+    filter_value.real = vc.sqrt(1 / psd)
+    filter_value.imag = filter_value.real
     vc.end()
 
     vc.if_statement(return_filter == 1)
     buff[ind] = filter_value
     vc.else_statement()
-    buff[ind] *= filter_value
+    buff[ind].real *= filter_value.real
+    buff[ind].imag *= filter_value.imag
     vc.end()
 
     #vc.if_statement(psd < 1e-10)

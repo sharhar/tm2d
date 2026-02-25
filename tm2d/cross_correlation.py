@@ -7,16 +7,18 @@ import numpy as np
 from .plan import Comparator
 
 def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tuple) -> vd.MappingFunction:
-    @vd.map_registers([c64])
-    def crop_mapping(input: Buff[f32], sum_buffer: Buff[v2]):
-        template_index = vc.mapping_index() / (micrograph_shape[1] * (micrograph_shape[2] + 2))
-        ind = vc.new_uint(vc.mapping_index() % (micrograph_shape[1] * (micrograph_shape[2] + 2)))
-        ind[:] = ind - 2 * (ind / micrograph_shape[2])
+    @vd.map
+    def crop_mapping(input: Buff[f32], sum_buffer: Buff[c64]):
+        read_op = vd.fft.read_op()
 
-        out_x = (ind / micrograph_shape[2]) % micrograph_shape[1]
+        template_index = read_op.io_index // (micrograph_shape[1] * (micrograph_shape[2] + 2))
+        ind = vc.new_uint_register(read_op.io_index % (micrograph_shape[1] * (micrograph_shape[2] + 2)))
+        ind[:] = ind - 2 * (ind // micrograph_shape[2])
+
+        out_x = (ind // micrograph_shape[2]) % micrograph_shape[1]
         out_y = ind % micrograph_shape[2]
 
-        in_coords = vc.new_uvec2()
+        in_coords = vc.new_uvec2_register()
         
         vc.if_any(vc.logical_and(
                     out_x >= template_shape[0] // 2,
@@ -25,8 +27,8 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
                     out_y >= template_shape[1] // 2,
                     out_y < micrograph_shape[2] - template_shape[1] // 2))
 
-        vc.mapping_registers()[0].x = 0.0
-        vc.mapping_registers()[0].y = 0.0
+        read_op.register.x = 0.0
+        read_op.register.y = 0.0
         vc.else_statement()
 
         vc.if_statement(out_x < micrograph_shape[1] // 2)
@@ -43,17 +45,15 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
 
         in_coords.x = in_coords.x * template_shape[1] + in_coords.y
 
-        out_reg = vc.mapping_registers()[0]
+        read_op.register[:] = sum_buffer[template_index] / (template_shape[0] * template_shape[1])
+        read_op.register.imag = vc.sqrt(read_op.register.imag - read_op.register.real * read_op.register.real)
 
-        out_reg[:] = sum_buffer[template_index] / (template_shape[0] * template_shape[1])
-        out_reg.y = vc.sqrt(out_reg.y - out_reg.x * out_reg.x)
-
-        in_coords.x = in_coords.x + 2 * (in_coords.x / (template_shape[1]))
+        in_coords.x = in_coords.x + 2 * (in_coords.x // (template_shape[1]))
 
         in_coords.x = in_coords.x + template_index * (micrograph_shape[1] * (micrograph_shape[2] + 2))
 
-        out_reg.x = (input[in_coords.x] - out_reg.x) / out_reg.y
-        out_reg.y = 0
+        read_op.register.real = (input[in_coords.x] - read_op.register.real) / read_op.register.imag
+        read_op.register.imag = 0
 
         vc.end()
 
@@ -61,7 +61,7 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
 
 @vd.shader(exec_size=lambda args: args.buf.size)
 def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):   
-    buf[vc.global_invocation().x] = val
+    buf[vc.global_invocation_id().x] = val
 
 class ComparatorCrossCorrelation(Comparator):
     def __init__(self, shape: tuple, template_shape: tuple):
@@ -90,16 +90,16 @@ class ComparatorCrossCorrelation(Comparator):
 
         correlation_signal = vd.RFFTBuffer(correlation_shape)
 
-        @vd.map_reduce(vd.SubgroupAdd, axes=[1, 2])
+        @vd.reduce.map_reduce(vd.reduce.SubgroupAdd, axes=[1, 2])
         def calc_sums(wave: Buff[c64]) -> v2:
-            ind = vc.mapping_index()
+            ind = vd.reduce.mapped_io_index()
 
-            result = vc.new_vec2()
+            result = vc.new_vec2_register()
 
             vc.if_statement(ind % template_buffer.shape[2] < template_buffer.shape[2] - 1)
 
-            result.x = wave[ind].x + wave[ind].y
-            result.y = wave[ind].x * wave[ind].x + wave[ind].y * wave[ind].y
+            result.x = wave[ind].real + wave[ind].imag
+            result.y = wave[ind].real * wave[ind].real + wave[ind].imag * wave[ind].imag
             vc.else_statement()
 
             result.x = 0.0
@@ -136,18 +136,18 @@ class ComparatorCrossCorrelation(Comparator):
             self.micrographs_buffer.shape[1] * self.micrographs_buffer.shape[2]
         )
 
-        @vd.map_registers([c64])
+        @vd.map
         def convolution_map(kernel_buffer: vc.Buffer[c64]):
-            img_val = vc.mapping_registers()[0]
-            read_register = vc.mapping_registers()[1]
+            img_val = vd.fft.read_op().register
+            read_register = vc.new_complex64_register()
 
-            read_register[:] = kernel_buffer[vc.mapping_index() % kernel_offset + kernel_offset * vc.kernel_index()]
-            img_val[:] = vc.mult_conj_c64(read_register, img_val)
+            read_register[:] = kernel_buffer[vd.fft.read_op().io_index % kernel_offset + kernel_offset * vd.fft.mapped_kernel_index()]
+            img_val[:] = vc.mult_complex(read_register, img_val.conjugate())
 
-        @vd.map_registers([c64])
+        @vd.map
         def output_map_func(output_buffer: vc.Buffer[c64]):
-            out_reg = vc.mapping_registers()[0]
-            output_buffer[vc.mapping_index() + kernel_offset * template_buffer.shape[0] * vc.kernel_index()] = out_reg
+            out_reg = vd.fft.write_op().register
+            output_buffer[vd.fft.write_op().io_index + kernel_offset * template_buffer.shape[0] * vd.fft.mapped_kernel_index()] = out_reg
 
         vd.fft.convolve(
             correlation_signal,

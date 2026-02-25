@@ -48,7 +48,7 @@ def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
 
 @vd.shader(exec_size=lambda args: args.buf.size)
 def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):
-    buf[vc.global_invocation().x] = val
+    buf[vc.global_invocation_id().x] = val
 
 def gaussian_filter(buffer_shape: tuple[int, int], tid: vc.ShaderVariable, pixel_size: float, A: float = 100.0):
     pix_size_sq = pixel_size * pixel_size
@@ -57,19 +57,19 @@ def gaussian_filter(buffer_shape: tuple[int, int], tid: vc.ShaderVariable, pixel
     B0 = 8 * np.pi** 2 * (0.27**2 + pix_size_sq / 12) # [A^2] blurring B-factor with contributions from pixel size and physical PSF
     var = 2 * pix_size_sq / B0
 
-    ind = tid.cast_to(i32).copy()
+    ind = tid.to_dtype(i32).to_register()
 
-    x = (ind / buffer_shape[1]).copy()
-    y = (ind % buffer_shape[1]).copy()
+    x = (ind // buffer_shape[1]).to_register()
+    y = (ind % buffer_shape[1]).to_register()
 
     x[:] = x + buffer_shape[0] // 2
     x[:] = x % buffer_shape[0]
     x[:] = x - buffer_shape[0] // 2
 
-    x_norm = (x.cast_to(vd.float32) / buffer_shape[0]).copy()
-    y_norm = (y.cast_to(vd.float32) / (buffer_shape[1] * 2 - 2)).copy()
+    x_norm = (x.to_dtype(vd.float32) / buffer_shape[0]).to_register()
+    y_norm = (y.to_dtype(vd.float32) / (buffer_shape[1] * 2 - 2)).to_register()
 
-    my_dist = vc.new_float()
+    my_dist = vc.new_float_register()
     my_dist[:] = (x_norm*x_norm + y_norm*y_norm) / ( var * 2 )
 
     vc.if_statement(my_dist > 100)
@@ -122,9 +122,9 @@ class TemplateAtomic(Template):
         
         @vd.shader(exec_size=lambda args: args.atom_coords.shape[0])
         def place_atoms(image: Buff[i32], atom_coords: Buff[f32], rot_matrix: rotation_type, my_pixel_size: pixel_size_type): # type: ignore
-            ind = vc.global_invocation().x.copy()
+            ind = vc.global_invocation_id().x.to_register()
 
-            pos = vc.new_vec4()
+            pos = vc.new_vec4_register()
             pos.x = -atom_coords[3*ind + 1] / my_pixel_size
             pos.y = atom_coords[3*ind + 0] / my_pixel_size
             pos.z = atom_coords[3*ind + 2] / my_pixel_size
@@ -132,9 +132,9 @@ class TemplateAtomic(Template):
 
             pos[:] = rot_matrix * pos
 
-            image_ind = vc.new_ivec2()
-            image_ind.y = vc.ceil(pos.y).cast_to(vd.int32) + (image.shape.y / 2)
-            image_ind.x = vc.ceil(-pos.x).cast_to(vd.int32) + ((image.shape.z * 2 - 2) / 2)
+            image_ind = vc.new_ivec2_register()
+            image_ind.y = vc.ceil(pos.y).to_dtype(vd.int32) + (image.shape.y // 2)
+            image_ind.x = vc.ceil(-pos.x).to_dtype(vd.int32) + ((image.shape.z * 2 - 2) // 2)
 
             vc.if_any(image_ind.x < 0, image_ind.x >= image.shape.y, image_ind.y < 0, image_ind.y >= (image.shape.z * 2 - 2))
             vc.return_statement()
@@ -150,21 +150,21 @@ class TemplateAtomic(Template):
         if self.disable_convolution:
             @vd.shader("buff.size * 2")
             def map_int_to_float_shader(buff: Buff[f32]):
-                tid = vc.global_invocation().x
-                buff[tid] = vc.float_bits_to_int(buff[tid]).cast_to(vd.float32) * my_sigma_e
+                tid = vc.global_invocation_id().x
+                buff[tid] = vc.float_bits_to_int(buff[tid]).to_dtype(vd.float32) * my_sigma_e
 
             map_int_to_float_shader(template_buffer)
 
             return template_buffer
 
-        @vd.map_registers([c64])
+        @vd.map
         def map_int_to_float(buff: Buff[f32]):
-            tid = vc.mapping_index()
+            read_op = vd.fft.read_op()
 
-            value = vc.float_bits_to_int(buff[tid]).cast_to(vd.float32) * my_sigma_e
+            value = vc.float_bits_to_int(buff[read_op.io_index]).to_dtype(vd.float32) * my_sigma_e
 
-            vc.mapping_registers()[0].x = value
-            vc.mapping_registers()[0].y = 0.0
+            read_op.register.x = value
+            read_op.register.y = 0.0
 
         vd.fft.fft(
             template_buffer,
@@ -175,8 +175,10 @@ class TemplateAtomic(Template):
         )
 
         def ctf_map_func(*in_args: Var):
-            tid = vc.mapping_index()
-            value = vc.mapping_registers()[0]
+            read_op = vd.fft.read_op()
+
+            tid = read_op.io_index
+            value = read_op.register
 
             my_pixel_size = in_args[0]
             
@@ -189,9 +191,11 @@ class TemplateAtomic(Template):
             if self.disable_ctf:
                 return
 
-            pos_2d = vc.new_vec2()
-            pos_2d.x = tid % template_buffer.shape[2]
-            pos_2d.y = ((tid / template_buffer.shape[2]) + template_buffer.shape[1] // 2) % template_buffer.shape[1]
+            upos_2d = vc.new_uvec2_register()
+            upos_2d.x = tid % template_buffer.shape[2]
+            upos_2d.y = ((tid // template_buffer.shape[2]) + template_buffer.shape[1] // 2) % template_buffer.shape[1]
+            
+            pos_2d = upos_2d.to_dtype(vc.v2).to_register()
             pos_2d.y = pos_2d.y - template_buffer.shape[1] // 2
 
             ctf_param_list = ctf_params.assemble_params_list_from_args(in_args[1:], template_count)
@@ -199,16 +203,17 @@ class TemplateAtomic(Template):
             value[:] = ctf_filter(
                 template_buffer.shape[1:],
                 pos_2d,
-                ctf_param_list[vc.kernel_index()],
+                ctf_param_list[vd.fft.mapped_kernel_index()],
                 my_pixel_size
             ) * value
 
-        ctf_map = vd.map(ctf_map_func, register_types=[c64], input_types = [pixel_size_type] + ctf_params.get_type_list() * template_count)
+        ctf_map = vd.map(ctf_map_func, input_types = [pixel_size_type] + ctf_params.get_type_list() * template_count)
 
-        @vd.map_registers([c64])
+        @vd.map
         def output_map_func(output_buffer: vc.Buffer[c64]):
-            out_reg = vc.mapping_registers()[0]
-            output_buffer[vc.mapping_index() + template_buffer.shape[1] * template_buffer.shape[2] * vc.kernel_index()] = out_reg
+            write_op = vd.fft.write_op()
+
+            output_buffer[write_op.io_index + template_buffer.shape[1] * template_buffer.shape[2] * vd.fft.mapped_kernel_index()] = write_op.register
 
         vd.fft.convolve(
             template_buffer,

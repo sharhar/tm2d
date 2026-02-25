@@ -147,3 +147,22 @@ for i in range(results.count):
 
     #for k, v in best_ctf_values.items():
     #    np.save(f"{output_dir}/{k}_{i + 1}.npy", v[i])
+
+
+"""
+
+Micrograph 0:
+        Max cross-correlation: 4653.39892578125
+        Best B: 475
+        Best defocus: 12750
+        Best pixel_size: 1.066
+        Best rotation: [188.84183  76.42089 326.     ]
+
+Micrograph 0:
+        Max cross-correlation: 4653.39892578125
+        Best B: 475
+        Best defocus: 12750
+        Best pixel_size: 1.066
+        Best rotation: [188.84183  76.42089 326.     ]
+
+"""

@@ -2,7 +2,7 @@ import vkdispatch as vd
 import vkdispatch.codegen as vc
 from vkdispatch.codegen.abreviations import *
 
-@vd.map_reduce(vd.SubgroupAdd)
+@vd.reduce.map_reduce(vd.reduce.SubgroupAdd)
 def calc_sums(wave: Buff[v2]) -> v2:
     ind = vc.mapping_index()
 

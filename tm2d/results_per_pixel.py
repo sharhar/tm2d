@@ -10,20 +10,20 @@ from .plan import Results
 # to approximate a higher precision accumulator.
 # Algorithm modified from this paper: https://link.springer.com/article/10.1007/pl00009321
 def double_precision_add_f32(dsa: Const[v2], dsb: Const[f32]) -> v2:
-    t2 = (dsa.y + dsb).copy()
-    dsc_x = (dsa.x + t2).copy()
+    t2 = (dsa.y + dsb).to_register()
+    dsc_x = (dsa.x + t2).to_register()
 
-    return vc.new_vec2(dsc_x, t2 - (dsc_x - dsa.x))
+    return vc.new_vec2_register(dsc_x, t2 - (dsc_x - dsa.x))
 
 
 def double_precision_add_vec2(dsa: vc.Const[vc.v2], dsb: vc.Const[vc.v2]) -> vc.v2:
-    t1 = (dsa.x + dsb.x).copy()
-    e = (t1 - dsa.x).copy()
-    t2 = (((dsb.x - e) + (dsa.x - (t1 - e))) + dsa.y + dsb.y).copy()
+    t1 = (dsa.x + dsb.x).to_register()
+    e = (t1 - dsa.x).to_register()
+    t2 = (((dsb.x - e) + (dsa.x - (t1 - e))) + dsa.y + dsb.y).to_register()
 
-    dsc_x = (t1 + t2).copy()
+    dsc_x = (t1 + t2).to_register()
 
-    return vc.new_vec2(dsc_x, t2 - (dsc_x - t1))
+    return vc.new_vec2_register(dsc_x, t2 - (dsc_x - t1))
 
 
 class ResultsPixel(Results):
@@ -229,23 +229,23 @@ class ResultsPixel(Results):
                        count: Buff[i32],
                        back_buffer: Buff[f32],
                        *index_values: Var[i32]):
-            ind = vc.global_invocation().x.cast_to(vc.i32).copy()
+            ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
 
-            micrograph_index = (ind / (self.max_cross.shape[1] * self.max_cross.shape[2])).copy()
-            micrograph_inner_index = (ind % (self.max_cross.shape[1] * self.max_cross.shape[2])).copy()
+            micrograph_index = (ind // (self.max_cross.shape[1] * self.max_cross.shape[2])).to_register()
+            micrograph_inner_index = (ind % (self.max_cross.shape[1] * self.max_cross.shape[2])).to_register()
 
-            back_buffer_offset = (micrograph_inner_index + 2 * (micrograph_inner_index / (self.max_cross.shape[2]))).copy()
+            back_buffer_offset = (micrograph_inner_index + 2 * (micrograph_inner_index // (self.max_cross.shape[2]))).to_register()
             back_buffer_offset[:] = back_buffer_offset + micrograph_index * template_offset
 
-            mip_register = vc.new_float(0, var_name="mip_register")
+            mip_register = vc.new_float_register(0, var_name="mip_register")
 
-            sum_cross_register = vc.new_vec2(0, var_name="sum_cross_register")
-            sum2_cross_register = vc.new_vec2(0, var_name="sum2_cross_register")
+            sum_cross_register = vc.new_vec2_register(0, var_name="sum_cross_register")
+            sum2_cross_register = vc.new_vec2_register(0, var_name="sum2_cross_register")
 
-            count_register = vc.new_int(0, var_name="count_register")
+            count_register = vc.new_int_register(0, var_name="count_register")
 
-            best_mip_register = vc.new_float(vc.ninf_f32, var_name="best_mip_register")
-            best_index_register = vc.new_int(-1, var_name="best_index_register")
+            best_mip_register = vc.new_float_register(vc.ninf_f32(), var_name="best_mip_register")
+            best_index_register = vc.new_int_register(-1, var_name="best_index_register")
 
             for i in range(template_count):
                 if i != 0:
@@ -282,8 +282,8 @@ class ResultsPixel(Results):
             best_index[ind] = best_index_register
             vc.end()
 
-        with vc.builder_context() as builder:
-            signature = vd.ShaderSignature.from_type_annotations(builder, [
+        with vd.shader_context() as ctx:
+            input_args = ctx.declare_input_arguments([
                 Buff[f32],  # max_cross
                 Buff[i32],  # best_index
                 Buff[v2],   # sum_cross
@@ -292,11 +292,9 @@ class ResultsPixel(Results):
                 Buff[f32],  # back_buffer
             ] + [Var[i32]] * len(indicies))
 
-            update_max_func(*signature.get_variables())
+            update_max_func(*input_args)
 
-            update_max_shader = vd.ShaderObject(
-                builder.build("update_max_func"), 
-                signature,
+            update_max_shader = ctx.get_function(
                 exec_count=self.max_cross.size
             )
         
