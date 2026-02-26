@@ -163,8 +163,8 @@ class TemplateAtomic(Template):
 
             value = vc.float_bits_to_int(buff[read_op.io_index]).to_dtype(vd.float32) * my_sigma_e
 
-            read_op.register.x = value
-            read_op.register.y = 0.0
+            read_op.register.real = value
+            read_op.register.imag = 0.0
 
         vd.fft.fft(
             template_buffer,

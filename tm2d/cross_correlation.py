@@ -27,8 +27,8 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
                     out_y >= template_shape[1] // 2,
                     out_y < micrograph_shape[2] - template_shape[1] // 2))
 
-        read_op.register.x = 0.0
-        read_op.register.y = 0.0
+        read_op.register.real = 0.0
+        read_op.register.imag = 0.0
         vc.else_statement()
 
         vc.if_statement(out_x < micrograph_shape[1] // 2)

@@ -397,7 +397,7 @@ def ctf_filter(
         pixel_size: float,
         disable_B_factor: bool = False):
     
-    gamma_lorentz = 1 + params.HT/E_MASS
+    gamma_lorentz = (1 + params.HT/E_MASS).to_register()
     beta = vc.sqrt(1 - 1/(gamma_lorentz*gamma_lorentz))
     
     epsilon = gamma_lorentz/(1 + params.HT/(2*E_MASS))
@@ -406,6 +406,7 @@ def ctf_filter(
     temp2 = epsilon*params.accel_voltage_std
 
     wlen = E_COMPTON / (gamma_lorentz * beta) # wavelength in Angstroms
+
     sigma_f = params.Cc*vc.sqrt(temp1*temp1 + temp2*temp2 + 4*params.OL_current_std*params.OL_current_std)
     
     Cs = params.Cs # [A]
@@ -472,7 +473,6 @@ def ctf_filter(
     return CTF
 
 def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel_size: float):
-    #@vd.shader(exec_size=lambda args: args.buff.size)
     with vd.shader_context() as ctx:
         shader_args = ctx.declare_input_arguments([Buff[c64]] + ctf_params.get_type_list())
 
@@ -483,11 +483,11 @@ def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel
 
         ind = vc.global_invocation_id().x.to_register()
 
-        ipos_2d = vc.new_uvec2_register()
-        ipos_2d.x[:] = ind % buffer.shape[2]
-        ipos_2d.y[:] = ((ind // buffer.shape[2]) + buffer.shape[1] // 2) % buffer.shape[1]
+        upos_2d = vc.new_uvec2_register()
+        upos_2d.x = ind % buffer.shape[2]
+        upos_2d.y = ((ind // buffer.shape[2]) + buffer.shape[1] // 2) % buffer.shape[1]
 
-        pos_2d = ipos_2d.to_dtype(vc.v2).to_register()
+        pos_2d = upos_2d.to_dtype(vc.v2).to_register()
         pos_2d.y = pos_2d.y - buffer.shape[1] // 2
 
         buff[ind] *= ctf_filter(
@@ -536,4 +536,4 @@ def generate_ctf(box_size: tuple[int, int], pixel_size: float, ctf_params: CTFPa
     )
 
     rctf2 = result_buffer.read_fourier(0)[0].real
-    return np.fft.fftshift(rfft2_to_fft2(rctf2, box_size).real) / 2 # division due to definition of ctf
+    return rctf2 # np.fft.fftshift(rfft2_to_fft2(rctf2, box_size).real) / 2 # division due to definition of ctf

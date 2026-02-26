@@ -51,6 +51,22 @@ template_atomic = tm2d.TemplateAtomic(
     tu.load_coords_from_npz("data/parsed_5lks_LSU.npz")
 )
 
+template_ex = template_atomic.make_template(
+    rotations=np.array([[188.84183,  78.82107, 326]]), # (phi, theta, psi) angles for the template
+    pixel_size=1.056, # pixel size in Angstroms
+    ctf_params=tm2d.CTFParams.like_krios(
+        defocus=12870,
+        B=0,
+        Cs=2.7e7
+    )
+)
+
+# plt.imshow(template_ex.read_real(0)[0])
+# plt.colorbar()
+# plt.title("Example template")
+# plt.show()
+
+
 data_array = np.array(
     [
         tu.whiten_image(np.load("data/bronwyn/image.npy")),
@@ -65,12 +81,13 @@ arr = tm2d.generate_ctf(
         B=0,
         Cs=2.7e7
     )
-
 )
 
-np.save("arr.npy", arr)
+# plt.imshow(arr)
+# plt.colorbar()
+# plt.show()
 
-#print("Data array shape:", data_array.shape)
+# exit()
 
 comparator = tm2d.ComparatorCrossCorrelation(
     data_array.shape, # shape of the micrographs
@@ -88,11 +105,12 @@ plan = tm2d.Plan(
     #pixel_size=1.056, # pixel size in Angstroms
     ctf_params=tm2d.CTFParams.like_krios(
         defocus = None, # 12870
-        B = None,
+        B = 475,
         Cs = 2.7e7
     ),
     whiten_template=True,
-    template_batch_size=4
+    template_batch_size=4,
+    pixel_size=1.066
 )
 
 plan.set_data(data_array)
@@ -106,22 +124,26 @@ rotations = tm2d.get_orientations_cube( # Get (phi, theta, psi) angles with cube
 
 params = plan.make_param_set(
     rotations=rotations,
-    pixel_sizes = np.arange(1.046, 1.066, 0.01),
+    # pixel_sizes = np.arange(1.046, 1.066, 0.01),
 
     defocus = np.arange(12700, 13000, 25),
     # Cs = np.arange(1.9e7, 2.2e7, 1e4),
-    B = np.arange(0, 500, 25),
+    # B = np.arange(0, 500, 25),
 )
 
 plan.run(params, enable_progress_bar=True)
 
-#values, axis_names = params.get_values_tensor(results.get_mip_list())
-
-#print("Values shape:", values.shape)
-#print("Axis names:", axis_names)
-#print("Values:", values)
-
 for i in range(results.count):
+    # plt.imshow(results.get_z_score()[i])
+    # plt.title(f"Z-score for micrograph {i}")
+    # plt.colorbar()
+    # plt.show()
+
+    # plt.imshow(results.get_mip()[i])
+    # plt.title(f"Max intensity projection for micrograph {i}")
+    # plt.colorbar()
+    # plt.show()
+
     np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
     np.save(f"{output_dir}/Z_score{i}.npy", results.get_z_score()[i])
 
@@ -138,15 +160,6 @@ for i in range(results.count):
 
     for param_name, param_values in params.get_values_at_index(best_indicies).items():
         np.save(f"{output_dir}/{param_name}_{i}.npy", param_values)
-
-    #print(f"\tBest params: {params.index_to_values(match_index)}")
-
-    #np.save(f"{output_dir}/phi_{i + 1}.npy", best_rotations[i, :, :, 0])
-    #np.save(f"{output_dir}/theta_{i + 1}.npy", best_rotations[i, :, :, 1])
-    #np.save(f"{output_dir}/psi_{i + 1}.npy", best_rotations[i, :, :, 2])
-
-    #for k, v in best_ctf_values.items():
-    #    np.save(f"{output_dir}/{k}_{i + 1}.npy", v[i])
 
 
 """

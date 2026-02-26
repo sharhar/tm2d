@@ -318,16 +318,12 @@ class Plan:
             ctf_batch_size = int(np.ceil(ctf_count / self.template_batch_size))
             rotations_pixels_batch_size = int(np.floor(batch_size / ctf_batch_size))
 
-            #print(f"Running batch {i} of size {ctf_count}, ctf_batch_size: {ctf_batch_size}, rotations_pixels_batch_size: {rotations_pixels_batch_size}")
-
             rotations_batch_size = rotations_pixels_batch_size
             pixel_batch_size = 1
 
             if params.get_rotation_count() == 1:
                 rotations_batch_size = 1
                 pixel_batch_size = rotations_pixels_batch_size
-
-            #print(f"Rotations batch size: {rotations_batch_size}, pixel batch size: {pixel_batch_size}")
 
             pixel_batch_size = min(pixel_batch_size, params.get_pixel_size_count())
 
@@ -345,8 +341,6 @@ class Plan:
                 self.template_batch_size,
                 i
             )
-
-            #print(ctf_index_arrays)
 
             for pixel_size_index in range(0, params.get_pixel_size_count(), pixel_batch_size):
                 actual_pixel_batch_size = min(pixel_batch_size, params.get_pixel_size_count() - pixel_size_index)
@@ -401,11 +395,11 @@ class Plan:
                     
                     rotation_offset = params.get_ctf_count() * params.get_pixel_size_count() * rotation_index
 
-                    for k in range(self.template_batch_size):
-                        self.cmd_graph.set_var(
-                            f"index{k}",
-                            index_arrays[k][:full_batch_size] + rotation_offset
-                        )
+                    # for k in range(self.template_batch_size):
+                    #     self.cmd_graph.set_var(
+                    #         f"index{k}",
+                    #         index_arrays[k][:full_batch_size] + rotation_offset
+                    #     )
                     
                     self.cmd_graph.submit_any(full_batch_size)
 
