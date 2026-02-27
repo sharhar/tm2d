@@ -295,7 +295,8 @@ class ResultsPixel(Results):
             update_max_func(*input_args)
 
             update_max_shader = ctx.get_function(
-                exec_count=self.max_cross.size
+                exec_count=self.max_cross.size,
+                name="update_max_func"
             )
         
         update_max_shader(

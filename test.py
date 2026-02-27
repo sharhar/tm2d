@@ -9,7 +9,7 @@ import tm2d.utilities as tu
 from matplotlib import pyplot as plt
 
 #vd.initialize(debug_mode=True)
-vd.make_context(multi_device=True, multi_queue=True)
+#vd.make_context(multi_device=True, multi_queue=True)
 
 small_region = tm2d.OrientationRegion(
         # symmetry="C1", # This is the default, so we can omit it
@@ -105,12 +105,12 @@ plan = tm2d.Plan(
     #pixel_size=1.056, # pixel size in Angstroms
     ctf_params=tm2d.CTFParams.like_krios(
         defocus = None, # 12870
-        B = 475,
+        B = None,
         Cs = 2.7e7
     ),
     whiten_template=True,
     template_batch_size=4,
-    pixel_size=1.066
+    #pixel_size=1.066
 )
 
 plan.set_data(data_array)
@@ -124,11 +124,11 @@ rotations = tm2d.get_orientations_cube( # Get (phi, theta, psi) angles with cube
 
 params = plan.make_param_set(
     rotations=rotations,
-    # pixel_sizes = np.arange(1.046, 1.066, 0.01),
+    pixel_sizes = np.arange(1.046, 1.066, 0.01),
 
     defocus = np.arange(12700, 13000, 25),
     # Cs = np.arange(1.9e7, 2.2e7, 1e4),
-    # B = np.arange(0, 500, 25),
+    B = np.arange(0, 500, 25),
 )
 
 plan.run(params, enable_progress_bar=True)

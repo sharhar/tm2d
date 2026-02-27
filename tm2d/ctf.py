@@ -498,7 +498,8 @@ def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel
         )
 
         ctf_apply_shader = ctx.get_function(
-            exec_count=buffer.size
+            exec_count=buffer.size,
+            name="apply_ctf_to_rfft_buffer"
         )
 
     ctf_apply_shader(buffer, *ctf_params.get_args(None, 1))
