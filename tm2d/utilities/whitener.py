@@ -216,8 +216,15 @@ def interp_pixel(
 
     return interpolated_value.x * interpolated_value.x + interpolated_value.y * interpolated_value.y
 
+#reduce min
+
+# @vd.reduce.map_reduce(reduction=vd.reduce.ReduceOp(
+#     name="azimuthal_sum",
+#     reduction=lambda x, y: vc.min(x, y),
+#     identity="-inf"
+# ), axes=[2, ])
 @vd.reduce.map_reduce(reduction=vd.reduce.SubgroupMin, axes=[2, ])
-def azimuthal_sum(buff: Buff[c128]) -> vc.f64:
+def azimuthal_sum(buff: Buff[c128]) -> vc.f32:
     ind = vd.reduce.mapped_io_index()
 
     template_index = ind % (buff.shape[2] * buff.shape[1])
@@ -240,7 +247,7 @@ def azimuthal_sum(buff: Buff[c128]) -> vc.f64:
     result_value[:] = interp_pixel(buff, x_coord, y_coord, batch_index)
     vc.end()
 
-    return result_value
+    return result_value.to_dtype(vc.f32)
 
 @vd.shader("buff.size")
 def apply_whiten_filter(buff: Buff[c128], sums_buffer: Buff[f32], return_filter: Const[i32] = 0):

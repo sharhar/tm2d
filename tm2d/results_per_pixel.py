@@ -218,7 +218,7 @@ class ResultsPixel(Results):
 
             count_register = vc.new_int_register(0, var_name="count_register")
 
-            best_mip_register = vc.new_float64_register(vc.ninf_f32(), var_name="best_mip_register")
+            best_mip_register = vc.new_float64_register(vc.ninf_f64(), var_name="best_mip_register")
             best_index_register = vc.new_int_register(-1, var_name="best_index_register")
 
             for i in range(template_count):

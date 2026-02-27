@@ -525,10 +525,10 @@ def rfft2_to_fft2(rfft_result, original_shape):
     return full_fft
 
 def generate_ctf(box_size: tuple[int, int], pixel_size: float, ctf_params: CTFParams = None) -> np.ndarray:
-    result_buffer = vd.RFFTBuffer((1, *box_size))
+    result_buffer = vd.RFFTBuffer((1, *box_size), fourier_type=vc.c128)
 
     ones = np.ones(shape=result_buffer.shape, dtype=np.float32)
-    result_buffer.write_fourier((ones + 1j * ones).astype(np.complex64))
+    result_buffer.write_fourier((ones + 1j * ones).astype(np.complex128))
 
     apply_ctf_to_rfft_buffer(
         result_buffer,
@@ -537,4 +537,4 @@ def generate_ctf(box_size: tuple[int, int], pixel_size: float, ctf_params: CTFPa
     )
 
     rctf2 = result_buffer.read_fourier(0)[0].real
-    return rctf2 # np.fft.fftshift(rfft2_to_fft2(rctf2, box_size).real) / 2 # division due to definition of ctf
+    return np.fft.fftshift(rfft2_to_fft2(rctf2, box_size).real) / 2 # division due to definition of ctf
