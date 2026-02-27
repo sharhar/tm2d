@@ -282,7 +282,7 @@ class CTFParams:
     def get_type_list(self):
         fields = dataclasses.fields(self)
         values = [self.__getattribute__(field.name) for field in fields]
-        types = [vc.Var[vc.f32] if value is None else vc.Const[vc.f32] for value in values]
+        types = [vc.Var[vc.f64] if value is None else vc.Const[vc.f64] for value in values]
         return types
     
     def get_args(self, cmd_graph: vd.CommandGraph, template_count: int):
@@ -474,7 +474,7 @@ def ctf_filter(
 
 def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel_size: float):
     with vd.shader_context() as ctx:
-        shader_args = ctx.declare_input_arguments([Buff[c64]] + ctf_params.get_type_list())
+        shader_args = ctx.declare_input_arguments([Buff[c128]] + ctf_params.get_type_list())
 
         buff = shader_args[0]
         shader_ctf_params = ctf_params.assemble_params_list_from_args(

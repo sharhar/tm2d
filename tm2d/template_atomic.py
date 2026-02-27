@@ -47,7 +47,7 @@ def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     return in_matricies.T
 
 @vd.shader(exec_size=lambda args: args.buf.size)
-def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):
+def fill_buffer(buf: Buff[c128], val: Const[c128] = 0):
     buf[vc.global_invocation_id().x] = val
 
 def gaussian_filter(buffer_shape: tuple[int, int], tid: vc.ShaderVariable, pixel_size: float, A: float = 100.0):
@@ -115,7 +115,8 @@ class TemplateAtomic(Template):
         
         sigma_e = tu.get_sigmaE(ctf_params.HT)
 
-        template_buffer = vd.RFFTBuffer((template_count, *self.shape))
+        template_buffer = vd.RFFTBuffer((template_count, *self.shape), fourier_type=c128)
+        template_int_buffer = vd.RFFTBuffer((template_count, *self.shape), fourier_type=c64)
 
         rotation_type: type = vc.Const[vc.m4] if isinstance(rotations, np.ndarray) else vc.Var[vc.m4]
         pixel_size_type: type = vc.Const[vd.float32] if isinstance(pixel_size, float) else vc.Var[vd.float32]
@@ -142,18 +143,18 @@ class TemplateAtomic(Template):
 
             vc.atomic_add(image[2 * image_ind.x * image.shape.z + image_ind.y], 1)
 
-        fill_buffer(template_buffer)
-        place_atoms(template_buffer, self.atomic_coords_buffer, rotations, pixel_size)
+        fill_buffer(template_int_buffer)
+        place_atoms(template_int_buffer, self.atomic_coords_buffer, rotations, pixel_size)
 
         my_sigma_e = 1.0 if self.disable_sigma_e else sigma_e
 
         if self.disable_convolution:
             @vd.shader("buff.size * 2")
-            def map_int_to_float_shader(buff: Buff[f32]):
+            def map_int_to_float_shader(buff: Buff[f64], in_buff: Buff[f32]):
                 tid = vc.global_invocation_id().x
-                buff[tid] = vc.float_bits_to_int(buff[tid]).to_dtype(vd.float32) * my_sigma_e
+                buff[tid] = vc.float_bits_to_int(in_buff[tid]).to_dtype(vd.float32) * my_sigma_e
 
-            map_int_to_float_shader(template_buffer)
+            map_int_to_float_shader(template_buffer, template_int_buffer)
 
             return template_buffer
 
@@ -163,15 +164,17 @@ class TemplateAtomic(Template):
 
             value = vc.float_bits_to_int(buff[read_op.io_index]).to_dtype(vd.float32) * my_sigma_e
 
-            read_op.register.real = value
+            read_op.register.real = value.to_dtype(vd.float64)
             read_op.register.imag = 0.0
 
         vd.fft.fft(
             template_buffer,
-            template_buffer,
+            template_int_buffer,
             buffer_shape=self.shape,
             r2c=True,
-            input_map=map_int_to_float
+            input_map=map_int_to_float,
+            compute_type=c128,
+            output_type=c128,
         )
 
         def ctf_map_func(*in_args: Var):
@@ -195,7 +198,7 @@ class TemplateAtomic(Template):
             upos_2d.x = tid % template_buffer.shape[2]
             upos_2d.y = ((tid // template_buffer.shape[2]) + template_buffer.shape[1] // 2) % template_buffer.shape[1]
             
-            pos_2d = upos_2d.to_dtype(vc.v2).to_register()
+            pos_2d = upos_2d.to_dtype(vc.dv2).to_register()
             pos_2d.y = pos_2d.y - template_buffer.shape[1] // 2
 
             ctf_param_list = ctf_params.assemble_params_list_from_args(in_args[1:], template_count)
@@ -210,7 +213,7 @@ class TemplateAtomic(Template):
         ctf_map = vd.map(ctf_map_func, input_types = [pixel_size_type] + ctf_params.get_type_list() * template_count)
 
         @vd.map
-        def output_map_func(output_buffer: vc.Buffer[c64]):
+        def output_map_func(output_buffer: vc.Buffer[c128]):
             write_op = vd.fft.write_op()
 
             output_buffer[write_op.io_index + template_buffer.shape[1] * template_buffer.shape[2] * vd.fft.mapped_kernel_index()] = write_op.register
@@ -226,6 +229,8 @@ class TemplateAtomic(Template):
             kernel_num=template_buffer.shape[0],
             buffer_shape=(1, *template_buffer.shape[1:]),
             normalize=False,
+            compute_type=c128,
+            input_type=c128,
         )
 
         vd.fft.irfft(template_buffer, normalize=False)

@@ -8,7 +8,7 @@ from .plan import Comparator
 
 def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tuple) -> vd.MappingFunction:
     @vd.map
-    def crop_mapping(input: Buff[f32], sum_buffer: Buff[c64]):
+    def crop_mapping(input: Buff[f64], sum_buffer: Buff[c128]):
         read_op = vd.fft.read_op()
 
         template_index = read_op.io_index // (micrograph_shape[1] * (micrograph_shape[2] + 2))
@@ -60,14 +60,14 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
     return crop_mapping
 
 @vd.shader(exec_size=lambda args: args.buf.size)
-def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):   
+def fill_buffer(buf: Buff[c128], val: Const[c128] = 0):   
     buf[vc.global_invocation_id().x] = val
 
 class ComparatorCrossCorrelation(Comparator):
     def __init__(self, shape: tuple, template_shape: tuple):
         assert len(shape) == 3, "Shape must be a 3D tuple (N, H, W) but got: {}".format(shape)
 
-        self.micrographs_buffer = vd.RFFTBuffer(shape)
+        self.micrographs_buffer = vd.RFFTBuffer(shape, fourier_type=c128)
 
         self.crop_mapping = make_crop_mapping(shape, template_shape)
 
@@ -76,7 +76,7 @@ class ComparatorCrossCorrelation(Comparator):
             data = data.reshape((1, *data.shape))
 
         assert data.ndim == 3, "Micrographs must be a 3D array (N, H, W)."
-        data = np.fft.rfft2(data).astype(np.complex64)
+        data = np.fft.rfft2(data).astype(np.complex128)
         self.micrographs_buffer.write_fourier(data)
 
     def compare_template(self, template_buffer: vd.RFFTBuffer, normalize: bool = True) -> vd.RFFTBuffer:
@@ -88,13 +88,13 @@ class ComparatorCrossCorrelation(Comparator):
             self.micrographs_buffer.real_shape[2]
         )
 
-        correlation_signal = vd.RFFTBuffer(correlation_shape)
+        correlation_signal = vd.RFFTBuffer(correlation_shape, fourier_type=c128)
 
         @vd.reduce.map_reduce(vd.reduce.SubgroupAdd, axes=[1, 2])
-        def calc_sums(wave: Buff[c64]) -> v2:
+        def calc_sums(wave: Buff[c128]) -> dv2:
             ind = vd.reduce.mapped_io_index()
 
-            result = vc.new_vec2_register()
+            result = vc.new_dvec2_register()
 
             vc.if_statement(ind % template_buffer.shape[2] < template_buffer.shape[2] - 1)
 
@@ -123,7 +123,9 @@ class ComparatorCrossCorrelation(Comparator):
             template_sum,
             buffer_shape=in_buffer_shape,
             input_map=self.crop_mapping,
-            r2c=True
+            r2c=True,
+            compute_type=c128,
+            output_type=c128
         )
 
         in_buffer_shape = (
@@ -137,15 +139,15 @@ class ComparatorCrossCorrelation(Comparator):
         )
 
         @vd.map
-        def convolution_map(kernel_buffer: vc.Buffer[c64]):
+        def convolution_map(kernel_buffer: vc.Buffer[c128]):
             img_val = vd.fft.read_op().register
-            read_register = vc.new_complex64_register()
+            read_register = vc.new_complex128_register()
 
             read_register[:] = kernel_buffer[vd.fft.read_op().io_index % kernel_offset + kernel_offset * vd.fft.mapped_kernel_index()]
             img_val[:] = vc.mult_complex(read_register, img_val.conjugate())
 
         @vd.map
-        def output_map_func(output_buffer: vc.Buffer[c64]):
+        def output_map_func(output_buffer: vc.Buffer[c128]):
             out_reg = vd.fft.write_op().register
             output_buffer[vd.fft.write_op().io_index + kernel_offset * template_buffer.shape[0] * vd.fft.mapped_kernel_index()] = out_reg
 
@@ -156,6 +158,7 @@ class ComparatorCrossCorrelation(Comparator):
             kernel_num=self.micrographs_buffer.shape[0],
             axis=1,
             buffer_shape=in_buffer_shape,
+            input_type=c128,
             kernel_map=convolution_map,
             output_map=output_map_func
         )

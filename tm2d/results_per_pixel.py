@@ -13,7 +13,7 @@ def double_precision_add_f32(dsa: Const[v2], dsb: Const[f32]) -> v2:
     t2 = (dsa.y + dsb).to_register()
     dsc_x = (dsa.x + t2).to_register()
 
-    return vc.new_vec2_register(dsc_x, t2 - (dsc_x - dsa.x))
+    return vc.new_dvec2_register(dsc_x, t2 - (dsc_x - dsa.x))
 
 
 def double_precision_add_vec2(dsa: vc.Const[vc.v2], dsb: vc.Const[vc.v2]) -> vc.v2:
@@ -23,7 +23,7 @@ def double_precision_add_vec2(dsa: vc.Const[vc.v2], dsb: vc.Const[vc.v2]) -> vc.
 
     dsc_x = (t1 + t2).to_register()
 
-    return vc.new_vec2_register(dsc_x, t2 - (dsc_x - t1))
+    return vc.new_dvec2_register(dsc_x, t2 - (dsc_x - t1))
 
 
 class ResultsPixel(Results):
@@ -58,10 +58,10 @@ class ResultsPixel(Results):
 
         self.count = count
 
-        self.max_cross = vd.Buffer((count, width, height), vd.float32)
+        self.max_cross = vd.Buffer((count, width, height), vd.float64)
         self.best_index = vd.Buffer((count, width, height), vd.int32)
-        self.sum_cross = vd.Buffer((count, width, height), vd.vec2)
-        self.sum2_cross = vd.Buffer((count, width, height), vd.vec2)
+        self.sum_cross = vd.Buffer((count, width, height), vd.dvec2)
+        self.sum2_cross = vd.Buffer((count, width, height), vd.dvec2)
         self.count_buffer = vd.Buffer((count, ), vd.int32)
         self.compiled = False
         self.compiled_mip = None
@@ -76,10 +76,10 @@ class ResultsPixel(Results):
         self.reset()
 
     def reset(self):
-        self.max_cross.write((np.ones(shape=self.max_cross.shape) * -1000000).astype(np.float32))
+        self.max_cross.write((np.ones(shape=self.max_cross.shape) * -1000000).astype(np.float64))
         self.best_index.write((np.ones(shape=self.best_index.shape, dtype=np.int32) * -1).astype(np.int32))
-        self.sum_cross.write(np.zeros(shape=(*self.sum_cross.shape, 2), dtype=np.float32))
-        self.sum2_cross.write(np.zeros(shape=(*self.sum2_cross.shape, 2), dtype=np.float32))
+        self.sum_cross.write(np.zeros(shape=(*self.sum_cross.shape, 2), dtype=np.float64))
+        self.sum2_cross.write(np.zeros(shape=(*self.sum2_cross.shape, 2), dtype=np.float64))
         self.count_buffer.write(np.zeros(shape=self.count_buffer.shape, dtype=np.int32))
 
         self.compiled = False
@@ -90,8 +90,6 @@ class ResultsPixel(Results):
         sum_crosses = self.sum_cross.read()
         sum2_crosses = self.sum2_cross.read()
         counts = self.count_buffer.read()
-
-        # print(counts)
 
         final_results = [np.zeros(shape=(self.max_cross.shape[0], self.max_cross.shape[1], self.max_cross.shape[2], 2), dtype=np.float64) for _ in max_crosses]
 
@@ -107,36 +105,12 @@ class ResultsPixel(Results):
         self.compiled_mip = true_final_result[:, :, :, 0]
         self.compiled_best_index_array = true_final_result[:, :, :, 1].astype(np.int32)
 
-        #def crop_array(arr):
-        #    #arr = np.fft.ifftshift(arr, axes=(2, 3))
-        #    arr_cropped = arr[:, 0, :2, :2, 0]
-        #    arr_transposed = arr_cropped.transpose((0, 1, 2))
-
-        #    return arr_transposed, np.sum(arr_transposed, axis=(0,))
-
-        #def print_array_info(arr, name):
-        #    crop, sum_value = crop_array(arr)
-        #    print(f"{name}: {crop} (sum = {sum_value})")
-
-        #print("sum_crosses:", sum_crosses[:, 0, :2, :2, :].transpose((1, 2, 3, 0)), "SUM", np.sum(sum_crosses[:, 0, :2, :2, :]))
-        #print("sum2_crosses:", sum2_crosses[:, 0, :2, :2, :].transpose((1, 2, 3, 0)), "SUM", np.sum(sum2_crosses[:, 0, :2, :2, :]))
-
-        #print_array_info(sum_crosses, "sum_crosses")
-        #print_array_info(sum2_crosses, "sum2_crosses")
-
         self.compiled_sum_cross = np.fft.ifftshift(np.array(sum_crosses, dtype=np.float64).sum(axis=(0, 4)), axes=(1, 2))
         self.compiled_sum2_cross = np.fft.ifftshift(np.array(sum2_crosses, dtype=np.float64).sum(axis=(0, 4)), axes=(1, 2))
         self.compiled_count = np.array(counts).sum(axis=0)
 
-        #print("compiled_count[0]:", self.compiled_count[0])
-        #print("compiled_sum_cross[0, :2, :2]:", self.compiled_sum_cross[0, :2, :2])
-        #print("compiled_sum2_cross[0, :2, :2]:", self.compiled_sum2_cross[0, :2, :2])
-
         self.compiled_cross_mean = self.compiled_sum_cross / self.compiled_count[:, None, None] # per-pixel mean of cross-correlation
         self.compiled_cross_variance = self.compiled_sum2_cross / self.compiled_count[:, None, None] - self.compiled_cross_mean * self.compiled_cross_mean # per-pixel variance of cross-correlation
-
-        #print("compiled_cross_mean[0, :2, :2]:", self.compiled_cross_mean[0, :2, :2])
-        #print("compiled_cross_variance[0, :2, :2]:", self.compiled_cross_variance[0, :2, :2])
 
         self.compiled_z_score = (self.compiled_mip - self.compiled_cross_mean) / np.sqrt(self.compiled_cross_variance)
         
@@ -222,12 +196,12 @@ class ResultsPixel(Results):
         template_count = comparison_buffer.shape[0] // self.max_cross.shape[0]
         template_offset = self.max_cross.shape[1] * (self.max_cross.shape[2] + 2) * template_count
 
-        def update_max_func(max_cross: Buff[f32],
+        def update_max_func(max_cross: Buff[f64],
                        best_index: Buff[i32],
-                       sum_cross: Buff[v2],
-                       sum2_cross: Buff[v2],
+                       sum_cross: Buff[dv2],
+                       sum2_cross: Buff[dv2],
                        count: Buff[i32],
-                       back_buffer: Buff[f32],
+                       back_buffer: Buff[f64],
                        *index_values: Var[i32]):
             ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
 
@@ -237,14 +211,14 @@ class ResultsPixel(Results):
             back_buffer_offset = (micrograph_inner_index + 2 * (micrograph_inner_index // (self.max_cross.shape[2]))).to_register()
             back_buffer_offset[:] = back_buffer_offset + micrograph_index * template_offset
 
-            mip_register = vc.new_float_register(0, var_name="mip_register")
+            mip_register = vc.new_float64_register(0, var_name="mip_register")
 
-            sum_cross_register = vc.new_vec2_register(0, var_name="sum_cross_register")
-            sum2_cross_register = vc.new_vec2_register(0, var_name="sum2_cross_register")
+            sum_cross_register = vc.new_dvec2_register(0, var_name="sum_cross_register")
+            sum2_cross_register = vc.new_dvec2_register(0, var_name="sum2_cross_register")
 
             count_register = vc.new_int_register(0, var_name="count_register")
 
-            best_mip_register = vc.new_float_register(vc.ninf_f32(), var_name="best_mip_register")
+            best_mip_register = vc.new_float64_register(vc.ninf_f32(), var_name="best_mip_register")
             best_index_register = vc.new_int_register(-1, var_name="best_index_register")
 
             for i in range(template_count):
@@ -284,12 +258,12 @@ class ResultsPixel(Results):
 
         with vd.shader_context() as ctx:
             input_args = ctx.declare_input_arguments([
-                Buff[f32],  # max_cross
+                Buff[f64],  # max_cross
                 Buff[i32],  # best_index
-                Buff[v2],   # sum_cross
-                Buff[v2],   # sum2_cross
+                Buff[dv2],   # sum_cross
+                Buff[dv2],   # sum2_cross
                 Buff[i32],  # count
-                Buff[f32],  # back_buffer
+                Buff[f64],  # back_buffer
             ] + [Var[i32]] * len(indicies))
 
             update_max_func(*input_args)
