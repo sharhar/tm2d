@@ -95,6 +95,26 @@ class CTFParams:
     defocus: float
     A_mag: float
     A_ang: float
+    mag_00: float
+    mag_01: float
+    mag_10: float
+    mag_11: float
+    e_zern_0: float
+    e_zern_1: float
+    e_zern_2: float
+    e_zern_3: float
+    e_zern_4: float
+    e_zern_5: float
+    e_zern_6: float
+    e_zern_7: float
+    e_zern_8: float
+    o_zern_0: float
+    o_zern_1: float
+    o_zern_2: float
+    o_zern_3: float
+    o_zern_4: float
+    o_zern_5: float
+
     
     _units = {
         'HT': ('V', 1.0), # stored in V, show in kV
@@ -115,6 +135,25 @@ class CTFParams:
         'defocus': ('A', 1.0),
         'A_mag': ('A', 1.0),
         'A_ang': ('deg', 1.0),
+        'mag_00': ('', 1.0),
+        'mag_01': ('', 1.0),
+        'mag_10': ('', 1.0),
+        'mag_11': ('', 1.0),
+        'e_zern_0': ('', 1.0),
+        'e_zern_1': ('', 1.0),
+        'e_zern_2': ('', 1.0),
+        'e_zern_3': ('', 1.0),
+        'e_zern_4': ('', 1.0),
+        'e_zern_5': ('', 1.0),
+        'e_zern_6': ('', 1.0),
+        'e_zern_7': ('', 1.0),
+        'e_zern_8': ('', 1.0),
+        'o_zern_0': ('', 1.0),
+        'o_zern_1': ('', 1.0),
+        'o_zern_2': ('', 1.0),
+        'o_zern_3': ('', 1.0),
+        'o_zern_4': ('', 1.0),
+        'o_zern_5': ('', 1.0),
     }
 
     def __init__(self,
@@ -135,7 +174,11 @@ class CTFParams:
                 lpp_rot: float = 0,
                 defocus: float = 10000,
                 A_mag: float = 0,
-                A_ang: float = 0):
+                A_ang: float = 0,
+                mag_matrix: np.ndarray = None,
+                even_zernike: list[float] = None,
+                odd_zernike: list[float] = None
+                ):
         
         self.HT = HT
         self.Cs = Cs
@@ -155,6 +198,53 @@ class CTFParams:
         self.defocus = defocus
         self.A_mag = A_mag
         self.A_ang = A_ang
+        if mag_matrix is not None:
+            assert mag_matrix.shape == (2, 2), "mag_matrix must be a 2x2 matrix."
+            self.mag_00 = mag_matrix[0, 0]
+            self.mag_01 = mag_matrix[0, 1]
+            self.mag_10 = mag_matrix[1, 0]
+            self.mag_11 = mag_matrix[1, 1]
+        else:
+            self.mag_00 = 1.0
+            self.mag_01 = 0.0
+            self.mag_10 = 0.0
+            self.mag_11 = 1.0
+        if even_zernike is not None:
+            assert len(even_zernike) == 9, "even_zernike must have 9 elements."
+            self.e_zern_0 = even_zernike[0]
+            self.e_zern_1 = even_zernike[1]
+            self.e_zern_2 = even_zernike[2]
+            self.e_zern_3 = even_zernike[3]
+            self.e_zern_4 = even_zernike[4]
+            self.e_zern_5 = even_zernike[5]
+            self.e_zern_6 = even_zernike[6]
+            self.e_zern_7 = even_zernike[7]
+            self.e_zern_8 = even_zernike[8]
+        else:
+            self.e_zern_0 = 0.0
+            self.e_zern_1 = 0.0
+            self.e_zern_2 = 0.0
+            self.e_zern_3 = 0.0
+            self.e_zern_4 = 0.0
+            self.e_zern_5 = 0.0
+            self.e_zern_6 = 0.0
+            self.e_zern_7 = 0.0
+            self.e_zern_8 = 0.0
+        if odd_zernike is not None:
+            assert len(odd_zernike) == 6, "odd_zernike must have 6 elements."
+            self.o_zern_0 = odd_zernike[0]
+            self.o_zern_1 = odd_zernike[1]
+            self.o_zern_2 = odd_zernike[2]
+            self.o_zern_3 = odd_zernike[3]
+            self.o_zern_4 = odd_zernike[4]
+            self.o_zern_5 = odd_zernike[5]
+        else:
+            self.o_zern_0 = 0.0
+            self.o_zern_1 = 0.0
+            self.o_zern_2 = 0.0
+            self.o_zern_3 = 0.0
+            self.o_zern_4 = 0.0
+            self.o_zern_5 = 0.0
 
     @classmethod
     def like_titan(cls,
@@ -175,7 +265,10 @@ class CTFParams:
                     lpp_rot: float = 18,
                     defocus: float = 10000,
                     A_mag: float = 0,
-                    A_ang: float = 0):
+                    A_ang: float = 0,
+                    mag_matrix: np.ndarray = None,
+                    even_zernike: list[float] = None,
+                    odd_zernike: list[float] = None):
         return cls(
             HT=HT,
             Cs=Cs,
@@ -194,7 +287,10 @@ class CTFParams:
             lpp_rot=lpp_rot,
             defocus=defocus,
             A_mag=A_mag,
-            A_ang=A_ang
+            A_ang=A_ang,
+            mag_matrix=mag_matrix,
+            even_zernike=even_zernike,
+            odd_zernike=odd_zernike
         )
     
     @classmethod
@@ -216,7 +312,10 @@ class CTFParams:
                     lpp_rot: float = 0,
                     defocus: float = 10000,
                     A_mag: float = 0,
-                    A_ang: float = 0):
+                    A_ang: float = 0,
+                    mag_matrix: np.ndarray = None,
+                    even_zernike: list[float] = None,
+                    odd_zernike: list[float] = None):
         return cls(
             HT=HT,
             Cs=Cs,
@@ -235,7 +334,10 @@ class CTFParams:
             lpp_rot=lpp_rot,
             defocus=defocus,
             A_mag=A_mag,
-            A_ang=A_ang
+            A_ang=A_ang,
+            mag_matrix=mag_matrix,
+            even_zernike=even_zernike,
+            odd_zernike=odd_zernike
         )
 
     @classmethod
@@ -257,7 +359,10 @@ class CTFParams:
                     lpp_rot: float = 0,
                     defocus: float = 10000,
                     A_mag: float = 0,
-                    A_ang: float = 0):
+                    A_ang: float = 0,
+                    mag_matrix: np.ndarray = None,
+                    even_zernike: list[float] = None,
+                    odd_zernike: list[float] = None):
         return cls(
             HT=HT,
             Cs=Cs,
@@ -276,7 +381,39 @@ class CTFParams:
             lpp_rot=lpp_rot,
             defocus=defocus,
             A_mag=A_mag,
-            A_ang=A_ang
+            A_ang=A_ang,
+            mag_matrix=mag_matrix,
+            even_zernike=even_zernike,
+            odd_zernike=odd_zernike
+        )
+
+    def get_even_coeff(self):
+        return (
+            self.e_zern_0,
+            self.e_zern_1,
+            self.e_zern_2,
+            self.e_zern_3,
+            self.e_zern_4,
+            self.e_zern_5,
+            self.e_zern_6,
+            self.e_zern_7,
+            self.e_zern_8
+        )
+    
+    def get_odd_coeff(self):
+        return (
+            self.o_zern_0,
+            self.o_zern_1,
+            self.o_zern_2,
+            self.o_zern_3,
+            self.o_zern_4,
+            self.o_zern_5,
+        )
+    
+    def get_mag_matrix(self):
+        return (
+            (self.mag_00, self.mag_01),
+            (self.mag_10, self.mag_11)
         )
 
     def get_type_list(self):
