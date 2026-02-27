@@ -247,6 +247,20 @@ class CTFParams:
             self.o_zern_5 = 0.0
 
     @classmethod
+    def from_arg_list(cls, *arg_list):
+        base_obj = cls()
+
+        fields = dataclasses.fields(base_obj)
+        assert len(arg_list) == len(fields), f"Expected {len(fields)} arguments, got {len(arg_list)}"
+
+        kwargs = {field.name: arg for field, arg in zip(fields, arg_list)}
+
+        for field in fields:
+            base_obj.__setattr__(field.name, kwargs[field.name])
+
+        return base_obj
+
+    @classmethod
     def like_titan(cls,
                     HT: float = 300e3,
                     Cs: float = 4.8e7,
@@ -445,7 +459,7 @@ class CTFParams:
         result = []
 
         for i in range(template_count):
-            result.append(CTFParams(
+            result.append(CTFParams.from_arg_list(
                 *args_list[i * len(fields):(i + 1) * len(fields)],
             ))
             
