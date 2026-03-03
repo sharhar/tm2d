@@ -140,5 +140,7 @@ class ResultsParam(Results):
         if not self.compiled:
             self.compile_results()
 
-        return self.compiled_best_values[:, :params.get_total_count()]
+        flat_mip = self.compiled_best_values[:, :params.get_total_count()]
+        mip_shape = params._get_tensor_shape(flat_mip.shape[0])[:-1]
+        return flat_mip.reshape(mip_shape)
 
