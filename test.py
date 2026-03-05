@@ -9,15 +9,15 @@ import tm2d.utilities as tu
 from matplotlib import pyplot as plt
 
 #vd.initialize(debug_mode=True)
-#vd.make_context(multi_device=True, multi_queue=True)
+vd.make_context(multi_device=True, multi_queue=True)
 
 small_region = tm2d.OrientationRegion(
         # symmetry="C1", # This is the default, so we can omit it
-        phi_min=180,
+        phi_min=185,
         phi_max=190,
-        theta_min=70,
+        theta_min=75,
         theta_max=80,
-        psi_min=310,
+        psi_min=320,
         psi_max=330
     )
 
@@ -60,16 +60,16 @@ plan = tm2d.Plan(
 plan.set_data(data_array)
 
 rotations = tm2d.get_orientations_cube(
-    angular_step_size=1,
-    psi_step_size=0.5,
+    angular_step_size=0.1,
+    psi_step_size=0.05,
     region=small_region
 )
 
 params = plan.make_param_set(
     rotations=rotations,
-    pixel_sizes = np.arange(1.05, 1.06, 0.001),
-    defocus = np.arange(12850, 12950, 5),
-    B = np.arange(0, 50, 5),
+    pixel_sizes = np.arange(1.056, 1.059, 0.001),
+    defocus = np.arange(12870, 12900, 1),
+    B = np.arange(4, 10, 1),
 )
 
 plan.run(params, enable_progress_bar=True)
