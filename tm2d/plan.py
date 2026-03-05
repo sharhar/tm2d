@@ -310,7 +310,7 @@ class Plan:
             print("Warning: Only one ctf parameter combination provided, but template_batch_size is greater than 1. This will result in suboiptimal performance.")
 
         if enable_progress_bar:
-            status_bar = tqdm.tqdm(total=params.get_total_count())
+            status_bar = tqdm.tqdm(total=params.get_total_count(), dynamic_ncols=True)
         
         for i in range(0, params.get_ctf_count(), max_batch_size):
 

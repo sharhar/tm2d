@@ -13,32 +13,12 @@ from matplotlib import pyplot as plt
 
 small_region = tm2d.OrientationRegion(
         # symmetry="C1", # This is the default, so we can omit it
-        phi_min=160, # Default is 0
-        phi_max=200, # Default is 360
-        theta_min=70, # Default is 0 
-        theta_max=90, # Default is 180
-        psi_min=300, # Default is 0
-        psi_max=340 # Default is 360
-    )
-
-medium_region = tm2d.OrientationRegion(
-        # symmetry="C1", # This is the default, so we can omit it
-        phi_min=100, # Default is 0
-        phi_max=200, # Default is 360
-        theta_min=70, # Default is 0 
-        theta_max=100, # Default is 180
-        psi_min=300, # Default is 0
-        psi_max=340 # Default is 360
-    )
-
-big_region = tm2d.OrientationRegion(
-        # symmetry="C1", # This is the default, so we can omit it
-        phi_min=0, # Default is 0
-        phi_max=360, # Default is 360
-        theta_min=0, # Default is 0 
-        theta_max=180, # Default is 180
-        psi_min=0, # Default is 0
-        psi_max=360 # Default is 360
+        phi_min=180,
+        phi_max=190,
+        theta_min=70,
+        theta_max=80,
+        psi_min=310,
+        psi_max=330
     )
 
 # A copy of the data folder can be found at:
@@ -51,98 +31,52 @@ template_atomic = tm2d.TemplateAtomic(
     tu.load_coords_from_npz("data/parsed_5lks_LSU.npz")
 )
 
-template_ex = template_atomic.make_template(
-    rotations=np.array([[188.84183,  78.82107, 326]]), # (phi, theta, psi) angles for the template
-    pixel_size=1.056, # pixel size in Angstroms
-    ctf_params=tm2d.CTFParams.like_krios(
-        defocus=12870,
-        B=0,
-        Cs=2.7e7
-    )
-)
-
-# plt.imshow(template_ex.read_real(0)[0])
-# plt.colorbar()
-# plt.title("Example template")
-# plt.show()
-
-
 data_array = np.array(
     [
-        tu.whiten_image(np.load("data/bronwyn/image.npy")),
+        tu.whiten_image(np.load("data/bronwyn/image.npy"), double_whiten=True),
     ]
 )
 
-arr = tm2d.generate_ctf(
-    (512, 512),
-    1.056,
-    tm2d.CTFParams.like_krios(
-        defocus=12870,
-        B=0,
-        Cs=2.7e7
-    )
-)
-
-# plt.imshow(arr)
-# plt.colorbar()
-# plt.show()
-
-# exit()
-
 comparator = tm2d.ComparatorCrossCorrelation(
-    data_array.shape, # shape of the micrographs
-    template_atomic.get_shape() # shape of the template
+    data_array.shape,
+    template_atomic.get_shape()
 )
 
 results = tm2d.ResultsPixel(data_array.shape)
-# results = tm2d.ResultsParam(data_array.shape[0], 5000000)
 
 plan = tm2d.Plan(
     template_atomic,
     comparator,
     results,
-    #rotation=[188.84183,  78.82107, 326],
-    #pixel_size=1.056, # pixel size in Angstroms
     ctf_params=tm2d.CTFParams.like_krios(
-        defocus = None, # 12870
+        defocus = None,
         B = None,
         Cs = 2.7e7
     ),
-    whiten_template=True,
+    whiten_template=False, #True,
     template_batch_size=4,
-    #pixel_size=1.066
 )
 
 plan.set_data(data_array)
 
-# Get rotation list with cube sampling
-rotations = tm2d.get_orientations_cube( # Get (phi, theta, psi) angles with cube sampling
-    angular_step_size=2, # out of plane rotation step size
-    psi_step_size=1, # in plane rotation step size
-    region=small_region # region of interest for the orientations
+rotations = tm2d.get_orientations_cube(
+    angular_step_size=1,
+    psi_step_size=0.5,
+    region=small_region
 )
 
 params = plan.make_param_set(
     rotations=rotations,
-    pixel_sizes = np.arange(1.046, 1.066, 0.01),
-
-    defocus = np.arange(12700, 13000, 25),
-    # Cs = np.arange(1.9e7, 2.2e7, 1e4),
-    B = np.arange(0, 500, 25),
+    pixel_sizes = np.arange(1.05, 1.06, 0.001),
+    defocus = np.arange(12850, 12950, 5),
+    B = np.arange(0, 50, 5),
 )
 
 plan.run(params, enable_progress_bar=True)
 
 for i in range(results.count):
-    # plt.imshow(results.get_z_score()[i])
-    # plt.title(f"Z-score for micrograph {i}")
-    # plt.colorbar()
-    # plt.show()
-
-    # plt.imshow(results.get_mip()[i])
-    # plt.title(f"Max intensity projection for micrograph {i}")
-    # plt.colorbar()
-    # plt.show()
+    np.save(f"{output_dir}/template{i}.npy", plan.template_buffer.read_real(0)[i])
+    np.save(f"{output_dir}/comparison{i}.npy", plan.comparison_buffer.read_real(0)[i])
 
     np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
     np.save(f"{output_dir}/Z_score{i}.npy", results.get_z_score()[i])
@@ -160,22 +94,3 @@ for i in range(results.count):
 
     for param_name, param_values in params.get_values_at_index(best_indicies).items():
         np.save(f"{output_dir}/{param_name}_{i}.npy", param_values)
-
-
-"""
-
-Micrograph 0:
-        Max cross-correlation: 4653.39892578125
-        Best B: 475
-        Best defocus: 12750
-        Best pixel_size: 1.066
-        Best rotation: [188.84183  76.42089 326.     ]
-
-Micrograph 0:
-        Max cross-correlation: 4653.39892578125
-        Best B: 475
-        Best defocus: 12750
-        Best pixel_size: 1.066
-        Best rotation: [188.84183  76.42089 326.     ]
-
-"""

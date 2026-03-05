@@ -216,7 +216,7 @@ def interp_pixel(
 
     return interpolated_value.x * interpolated_value.x + interpolated_value.y * interpolated_value.y
 
-@vd.reduce.map_reduce(reduction=vd.reduce.SubgroupMin, axes=[2, ])
+@vd.reduce.map_reduce(reduction=vd.reduce.SubgroupAdd, axes=[2, ])
 def azimuthal_sum(buff: Buff[c64]) -> vc.f32:
     ind = vd.reduce.mapped_io_index()
 
