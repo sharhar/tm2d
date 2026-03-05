@@ -31,14 +31,46 @@ class ResultsParam(Results):
         
         assert len(indicies) == template_count, \
             f"The number of indicies ({len(indicies)}) must match the number of templates"
-        
-        @vd.map_reduce(vd.SubgroupMax, axes=[1, 2])
+
+        pixel_count = comparison_buffer.shape[1] * (comparison_buffer.shape[2] - 1) * 2
+
+        @vd.reduce.map_reduce(vd.reduce.SubgroupMax, axes=[1, 2])
         def find_best_mip(buf: Buff[c64]) -> f32:
-            ind = vc.mapping_index()
-            result = vc.new_float()
+            ind = vd.reduce.mapped_io_index()
+            result = vc.new_float_register(0)
 
             vc.if_statement(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1)
-            result[:] = vc.max(buf[ind].x, buf[ind].y)
+            result[:] = vc.max(buf[ind].real, buf[ind].imag)
+            vc.else_statement()
+            result[:] = 0.0
+            vc.end()
+
+            return result
+
+        @vd.reduce.map_reduce(vd.reduce.SubgroupAdd, axes=[1, 2])
+        def find_sum(buf: Buff[c64]) -> f32:
+            ind = vd.reduce.mapped_io_index()
+            result = vc.new_float_register(0)
+
+            vc.if_statement(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1)
+            result[:] = buf[ind].real + buf[ind].imag
+            vc.else_statement()
+            result[:] = 0.0
+            vc.end()
+
+            return result
+
+        @vd.reduce.map_reduce(vd.reduce.SubgroupAdd, axes=[1, 2])
+        def find_sum2(buf: Buff[c64]) -> f32:
+            ind = vd.reduce.mapped_io_index()
+            result = vc.new_float_register(0)
+            val_real = vc.new_float_register(0)
+            val_imag = vc.new_float_register(0)
+
+            vc.if_statement(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1)
+            val_real[:] = buf[ind].real
+            val_imag[:] = buf[ind].imag
+            result[:] = val_real * val_real + val_imag * val_imag
             vc.else_statement()
             result[:] = 0.0
             vc.end()
@@ -48,36 +80,51 @@ class ResultsParam(Results):
         def update_best_value_func(
                 buff: Buff[f32],
                 maxes_buff: Buff[f32],
+                sums_buff: Buff[f32],
+                sum2s_buff: Buff[f32],
                 *indicies: Var[i32]):
-            ind = vc.global_invocation().x
-            
+            ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
+
             for i in range(template_count):
                 output_index = ind * self.best_values_buffer.shape[1] + indicies[i]
                 input_index = ind * template_count + i
 
-                vc.if_statement(maxes_buff[input_index] > buff[output_index])
-                buff[output_index] = maxes_buff[input_index]
+                vc.if_statement(indicies[i] >= 0)
+
+                mean_val = (sums_buff[input_index] / float(pixel_count)).to_register()
+                var_val = vc.max(sum2s_buff[input_index] / float(pixel_count) - mean_val * mean_val, 0.0).to_register()
+                z_score = ((maxes_buff[input_index] - mean_val) / vc.sqrt(var_val + 1e-6)).to_register()
+
+                vc.if_statement(z_score > buff[output_index])
+                buff[output_index] = z_score
                 vc.end()
 
-        with vc.builder_context() as builder:
-            signature = vd.ShaderSignature.from_type_annotations(builder, [
+                vc.end()
+
+        with vd.shader_context() as ctx:
+            input_args = ctx.declare_input_arguments([
                 Buff[f32],  # buff
-                Buff[i32],  # maxes_buff
+                Buff[f32],  # maxes_buff
+                Buff[f32],  # sums_buff
+                Buff[f32],  # sum2s_buff
             ] + [Var[i32]] * len(indicies))
 
-            update_best_value_func(*signature.get_variables())
+            update_best_value_func(*input_args)
 
-            update_best_value_shader = vd.ShaderObject(
-                builder.build("update_best_value_func"), 
-                signature,
-                exec_count=self.best_values_buffer.shape[0]
+            update_best_value_shader = ctx.get_function(
+                exec_count=self.best_values_buffer.shape[0],
+                name="update_best_value_func"
             )
 
         max_values_buff = find_best_mip(comparison_buffer)
+        sum_values_buff = find_sum(comparison_buffer)
+        sum2_values_buff = find_sum2(comparison_buffer)
 
         update_best_value_shader(
             self.best_values_buffer,
             max_values_buff,
+            sum_values_buff,
+            sum2_values_buff,
             *indicies
         )
 
@@ -89,32 +136,11 @@ class ResultsParam(Results):
 
         self.compiled = True
     
-    def get_mip_list(self):
+    def get_mip_list(self, params: ParamSet):
         if not self.compiled:
             self.compile_results()
 
-        return self.compiled_best_values
-
-        # actual_best_values = self.compiled_best_values[:, :params.get_total_count()] # if true_size is None else self.compiled_best_values[:true_size]
-        
-        # print(params.get_total_count())
-        # print(self.compiled_best_values.shape)
-        # print(actual_best_values.shape)
-        
-        # param_values_dict = params.index_to_values(np.arange(0, actual_best_values.shape[1], 1))
-        # print(param_values_dict)
-
-        #assert actual_best_values.shape[1] == rotations.shape[0] * defocus_values.shape[0], "The number of best MIPs does not match the number of parameters"
-        #assert rotations.shape[0] % IPA_count == 0, "The number of rotations must be divisible by the number of in-plane angles"
-
-        #param_indicies = np.array(range(actual_best_values.shape[1]), dtype=np.int32)
-        #defocus_indicies = param_indicies // rotations.shape[0]
-        #rotation_indicies = param_indicies % rotations.shape[0]
-
-        #param_list_result = np.zeros((actual_best_values.shape[0], actual_best_values.shape[1], 5), dtype=np.float32)
-        #param_list_result[:, :, :3] = rotations[rotation_indicies]
-        #param_list_result[:, :, 3] = defocus_values[defocus_indicies]
-        #param_list_result[:, :, 4] = actual_best_values
-
-        #return param_list_result.reshape(actual_best_values.shape[0], defocus_values.shape[0], rotations.shape[0] // IPA_count, IPA_count,  5)
+        flat_mip = self.compiled_best_values[:, :params.get_total_count()]
+        mip_shape = params._get_tensor_shape(flat_mip.shape[0])[:-1]
+        return flat_mip.reshape(mip_shape)
 
