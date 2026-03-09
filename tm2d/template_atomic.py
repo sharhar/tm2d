@@ -200,12 +200,14 @@ class TemplateAtomic(Template):
 
             ctf_param_list = ctf_params.assemble_params_list_from_args(in_args[1:], template_count)
 
-            value[:] = ctf_filter(
+            ctf = ctf_filter(
                 template_buffer.shape[1:],
                 pos_2d,
                 ctf_param_list[vd.fft.mapped_kernel_index()],
                 my_pixel_size
-            ) * value
+            )
+
+            value[:] = vc.mult_complex(value, ctf)
 
         ctf_map = vd.map(ctf_map_func, input_types = [pixel_size_type] + ctf_params.get_type_list() * template_count)
 

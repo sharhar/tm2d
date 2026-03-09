@@ -13,11 +13,11 @@ vd.make_context(multi_device=True, multi_queue=True)
 
 small_region = tm2d.OrientationRegion(
         # symmetry="C1", # This is the default, so we can omit it
-        phi_min=185,
-        phi_max=190,
-        theta_min=75,
-        theta_max=80,
-        psi_min=320,
+        phi_min=170,
+        phi_max=200,
+        theta_min=70,
+        theta_max=90,
+        psi_min=300,
         psi_max=330
     )
 
@@ -60,8 +60,8 @@ plan = tm2d.Plan(
 plan.set_data(data_array)
 
 rotations = tm2d.get_orientations_cube(
-    angular_step_size=0.1,
-    psi_step_size=0.05,
+    angular_step_size=2,
+    psi_step_size=1,
     region=small_region
 )
 

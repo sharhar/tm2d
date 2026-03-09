@@ -186,13 +186,13 @@ class TemplateDensity(Template):
                 if self.disable_ctf:
                     buff[index] = my_pos.xy
                 else:
-                    buff[index] = my_pos.xy * ctf_filter(
+                    buff[index] = vc.mult_complex(my_pos.xy, ctf_filter(
                         template_buffer_temp.shape[1:],
                         defocus_values[i],
                         pos_2d,
                         ctf_params,
                         pixel_size
-                    )
+                    ))
         
         with vc.builder_context() as builder:
             signature = vd.ShaderSignature.from_type_annotations(builder, [
