@@ -51,6 +51,8 @@ def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):
     buf[vc.global_invocation_id().x] = val
 
 def gaussian_filter(buffer_shape: tuple[int, int], tid: vc.ShaderVariable, pixel_size: float, A: float = 100.0):
+    vc.comment("Calculate a Gaussian filter value for the given thread ID and pixel size.")
+    
     pix_size_sq = pixel_size * pixel_size
     
     amp = A / pix_size_sq
@@ -227,7 +229,7 @@ class TemplateAtomic(Template):
             output_map=output_map_func,
             kernel_num=template_buffer.shape[0],
             buffer_shape=(1, *template_buffer.shape[1:]),
-            normalize=False,
+            normalize=False
         )
 
         vd.fft.irfft(template_buffer, normalize=False)

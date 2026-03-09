@@ -578,9 +578,7 @@ def _zernike_radial(n: int, m: int, r: vc.ShaderVariable) -> vc.ShaderVariable:
         out += c * r ** (n - 2 * s)
     return out
 
-def _zernike_cart(m: int, n: int, kx: vc.ShaderVariable, ky: vc.ShaderVariable) -> vc.ShaderVariable:
-    r = vc.sqrt(kx * kx + ky * ky)
-    th = vc.atan2(ky, kx)
+def _zernike_cart(m: int, n: int, r: vc.ShaderVariable, th: vc.ShaderVariable) -> vc.ShaderVariable:
     R = _zernike_radial(n, m, r)
     if m == 0:
         return R
@@ -591,19 +589,23 @@ def _zernike_cart(m: int, n: int, kx: vc.ShaderVariable, ky: vc.ShaderVariable) 
 
 def phase_from_even_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff: vc.ShaderVariable) -> vc.ShaderVariable:
     psi = vc.new_float_register()
+    r = vc.sqrt(Sx_eff * Sx_eff + Sy_eff * Sy_eff).to_register()
+    th = vc.atan2(Sy_eff, Sx_eff).to_register()
     for i in range(9):
         vc.if_statement(params.get_even_coeff()[i] != 0.0)
         m, n = _even_index_to_mn(i)
-        psi += params.get_even_coeff()[i] * _zernike_cart(m, n, Sx_eff, Sy_eff)
+        psi += params.get_even_coeff()[i] * _zernike_cart(m, n, r, th)
         vc.end()
     return psi
 
 def phase_from_odd_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff: vc.ShaderVariable) -> vc.ShaderVariable:
     psi = vc.new_float_register()
+    r = vc.sqrt(Sx_eff * Sx_eff + Sy_eff * Sy_eff).to_register()
+    th = vc.atan2(Sy_eff, Sx_eff).to_register()
     for i in range(6):
         vc.if_statement(params.get_odd_coeff()[i] != 0.0)
         m, n = _odd_index_to_mn(i)
-        psi += params.get_odd_coeff()[i] * _zernike_cart(m, n, Sx_eff, Sy_eff)
+        psi += params.get_odd_coeff()[i] * _zernike_cart(m, n, r, th)
         vc.end()
     return psi # [rad]
 
@@ -613,7 +615,7 @@ def ctf_filter(
         params: CTFParams,
         pixel_size: float,
         disable_B_factor: bool = False):
-    
+    vc.comment("Calculating CTF")
     gamma_lorentz = 1 + params.HT/E_MASS
     beta = vc.sqrt(1 - 1/(gamma_lorentz*gamma_lorentz))
     

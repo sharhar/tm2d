@@ -9,7 +9,7 @@ import tm2d.utilities as tu
 from matplotlib import pyplot as plt
 
 #vd.initialize(debug_mode=True)
-vd.make_context(multi_device=True, multi_queue=True)
+#vd.make_context(multi_device=True, multi_queue=True)
 
 small_region = tm2d.OrientationRegion(
         # symmetry="C1", # This is the default, so we can omit it
@@ -25,7 +25,6 @@ small_region = tm2d.OrientationRegion(
 # /BigData/Workspaces/shahar/data
 
 output_dir = sys.argv[1]
-
 template_atomic = tm2d.TemplateAtomic(
     (512, 512),
     tu.load_coords_from_npz("data/parsed_5lks_LSU.npz")
@@ -54,7 +53,7 @@ plan = tm2d.Plan(
         Cs = 2.7e7
     ),
     whiten_template=False, #True,
-    template_batch_size=4,
+    template_batch_size=1, #4,
 )
 
 plan.set_data(data_array)
@@ -67,9 +66,9 @@ rotations = tm2d.get_orientations_cube(
 
 params = plan.make_param_set(
     rotations=rotations,
-    pixel_sizes = np.arange(1.056, 1.059, 0.001),
-    defocus = np.arange(12870, 12900, 1),
-    B = np.arange(4, 10, 1),
+    pixel_sizes = np.arange(1.056, 1.059, 0.002),
+    defocus = np.arange(12870, 12900, 2),
+    B = np.arange(4, 10, 2),
 )
 
 plan.run(params, enable_progress_bar=True)
