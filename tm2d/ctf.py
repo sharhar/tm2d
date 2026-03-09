@@ -430,38 +430,75 @@ class CTFParams:
             (self.mag_10, self.mag_11)
         )
 
-    def get_type_list(self):
+    def get_type_list(self, template_count: int):
+        types = []
+
         fields = dataclasses.fields(self)
-        values = [self.__getattribute__(field.name) for field in fields]
-        types = [vc.Var[vc.f32] if value is None else vc.Const[vc.f32] for value in values]
+
+        for field in fields:
+            value = self.__getattribute__(field.name)
+
+            if value is not None:
+                types.append(vc.Const[vc.f32])
+
+        for _ in range(template_count):
+            for field in fields:
+                value = self.__getattribute__(field.name)
+
+                if value is None:
+                    types.append(vc.Var[vc.f32])
+
         return types
     
     def get_args(self, cmd_graph: vd.CommandGraph, template_count: int):
         args = []
 
         fields = dataclasses.fields(self)
-        values = [self.__getattribute__(field.name) for field in fields]
+
+        for field in fields:
+            value = self.__getattribute__(field.name)
+
+            if value is not None:
+                args.append(value)
 
         for batch_id in range(template_count):
-            for value, field in zip(values, fields):
+            for field in fields:
+                value = self.__getattribute__(field.name)
+
                 if value is None:
                     args.append(cmd_graph.bind_var(f"{field.name}_{batch_id}"))
-                else:
-                    args.append(value)
 
         return args
     
     def assemble_params_list_from_args(self, args_list: list[vc.Var], template_count: int) -> "list[CTFParams]":
         fields = dataclasses.fields(self)
+
+        static_count = 0
+        dynamic_count = 0
+        static_values = [None] * len(fields)
+        dynamic_indicies = []
+
+        for ii, field in enumerate(fields):
+            value = self.__getattribute__(field.name)
+
+            if value is not None:
+                static_values[ii] = args_list[static_count]
+                static_count += 1
+            else:
+                dynamic_count += 1
+                dynamic_indicies.append(ii)
         
-        assert len(args_list) == len(fields) * template_count, f"Expected {len(fields) * template_count} args, got {len(args_list)}"
+        assert len(args_list) == static_count + dynamic_count * template_count, f"Expected {static_count} + {dynamic_count} * {template_count} args, got {len(args_list)}"
+
+        dynamic_args_list = args_list[static_count:]
 
         result = []
 
         for i in range(template_count):
-            result.append(CTFParams.from_arg_list(
-                *args_list[i * len(fields):(i + 1) * len(fields)],
-            ))
+            for ii, dyn_ind in enumerate(dynamic_indicies):
+                static_values[dyn_ind] = dynamic_args_list[i * dynamic_count + ii]
+
+            result.append(CTFParams.from_arg_list(*static_values))
             
         return result
 
@@ -704,7 +741,7 @@ def ctf_filter(
 
 def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel_size: float):
     with vd.shader_context() as ctx:
-        shader_args = ctx.declare_input_arguments([Buff[c64]] + ctf_params.get_type_list())
+        shader_args = ctx.declare_input_arguments([Buff[c64]] + ctf_params.get_type_list(1))
 
         buff = shader_args[0]
         shader_ctf_params = ctf_params.assemble_params_list_from_args(

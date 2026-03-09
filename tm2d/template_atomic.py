@@ -211,7 +211,7 @@ class TemplateAtomic(Template):
 
             value[:] = vc.mult_complex(value, ctf)
 
-        ctf_map = vd.map(ctf_map_func, input_types = [pixel_size_type] + ctf_params.get_type_list() * template_count)
+        ctf_map = vd.map(ctf_map_func, input_types = [pixel_size_type] + ctf_params.get_type_list(template_count))
 
         @vd.map
         def output_map_func(output_buffer: vc.Buffer[c64]):

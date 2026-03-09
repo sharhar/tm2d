@@ -8,6 +8,13 @@ import tm2d.utilities as tu
 
 from matplotlib import pyplot as plt
 
+def save_arr_as_png(arr: np.ndarray, title: str, filename: str):
+    plt.clf()
+    plt.imshow(arr)
+    plt.title(title)
+    plt.colorbar()
+    plt.savefig(filename)
+
 #vd.initialize(debug_mode=True)
 #vd.make_context(multi_device=True, multi_queue=True)
 
@@ -52,8 +59,8 @@ plan = tm2d.Plan(
         B = None,
         Cs = 2.7e7
     ),
-    whiten_template=False, #True,
-    template_batch_size=1, #4,
+    whiten_template=False,
+    template_batch_size=4,
 )
 
 plan.set_data(data_array)
