@@ -203,7 +203,7 @@ class ParamSet:
         values_tensor = np.zeros(shape=initial_values_shape, dtype=np.float32)
 
         if self.rotations is None and self.pixel_sizes is None:
-            values_tensor[:, :, 0] = cropped_mip_list
+            values_tensor[:, :, 0] = cropped_mip_list.reshape(values_tensor.shape[:-1])
             values_tensor[:, :, 1:] = self.ctf_set.combinations_array
         elif self.rotations is None:
             values_tensor[:, :, :, 0] = cropped_mip_list.reshape(values_tensor.shape[:-1])
