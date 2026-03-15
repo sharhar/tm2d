@@ -684,8 +684,8 @@ def ctf_filter(
     wave_shape.x = buffer_shape[0]
     wave_shape.y = buffer_shape[1] * 2 - 2
 
-    Sx_raw = (pos_2d.y/(wave_shape.y * pixel_size)).to_register()
-    Sy_raw = (-pos_2d.x/(wave_shape.x * pixel_size)).to_register()
+    Sx_raw = (pos_2d.x/(wave_shape.x * pixel_size)).to_register()
+    Sy_raw = (pos_2d.y/(wave_shape.y * pixel_size)).to_register()
 
     Sx = (params.mag_00 * Sx_raw + params.mag_01 * Sy_raw).to_register()
     Sy = (params.mag_10 * Sx_raw + params.mag_11 * Sy_raw).to_register()
@@ -694,7 +694,7 @@ def ctf_filter(
     psi_odd = phase_from_odd_zernike(params, Sx, Sy)
 
     Sr_2 = (Sx*Sx + Sy*Sy).to_register()
-    Sa = vc.atan2(Sy, Sx).to_register()
+    Sa = (vc.atan2(Sy, Sx) + np.pi/2).to_register()
     
     wlen_2 = wlen*wlen
 
@@ -731,6 +731,9 @@ def ctf_filter(
     CTF.real *= CTF_scale
     CTF.imag *= CTF_scale
     
+    #CTF.real = CTF_scale
+    #CTF.imag = 0
+
     is_dc = vc.logical_and(Sx == 0.0, Sy == 0.0)
     vc.if_statement(is_dc)
     CTF.real = 0.0
@@ -797,7 +800,7 @@ def generate_ctf(box_size: tuple[int, int], pixel_size: float, ctf_params: CTFPa
     result_buffer = vd.RFFTBuffer((1, *box_size))
 
     ones = np.ones(shape=result_buffer.shape, dtype=np.float32)
-    result_buffer.write_fourier((ones + 1j * ones).astype(np.complex64))
+    result_buffer.write_fourier((ones).astype(np.complex64))
 
     apply_ctf_to_rfft_buffer(
         result_buffer,
@@ -805,5 +808,5 @@ def generate_ctf(box_size: tuple[int, int], pixel_size: float, ctf_params: CTFPa
         pixel_size
     )
 
-    rctf2 = result_buffer.read_fourier(0)[0].real
-    return np.fft.fftshift(rfft2_to_fft2(rctf2, box_size).real) / 2 # division due to definition of ctf
+    rctf2 = result_buffer.read_fourier(0)[0]
+    return np.fft.fftshift(rfft2_to_fft2(rctf2, box_size)) / 2 # division due to definition of ctf
