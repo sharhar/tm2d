@@ -103,3 +103,23 @@ def process_raw_micrograph(
         test_image_normalized = whiten_image(test_image_normalized)
 
     return test_image_normalized
+
+def center_crop(im, edge_buffer_pix):
+    if edge_buffer_pix <= 0:
+        return im.copy()
+    return im[edge_buffer_pix:-edge_buffer_pix, edge_buffer_pix:-edge_buffer_pix]
+
+def center_pad(im, edge_buffer_pix, edge_value=np.nan):
+    if edge_buffer_pix <= 0:
+        return im.copy()
+    return np.pad(im, pad_width=edge_buffer_pix, mode='constant', constant_values=edge_value)
+
+def replace_edges(im, edge_buffer_pix, edge_value=np.nan):
+    if edge_buffer_pix <= 0:
+        return im.copy()
+    im_out = im.copy()
+    im_out[:edge_buffer_pix, :] = edge_value
+    im_out[-edge_buffer_pix:, :] = edge_value
+    im_out[:, :edge_buffer_pix] = edge_value
+    im_out[:, -edge_buffer_pix:] = edge_value
+    return im_out

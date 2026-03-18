@@ -10,17 +10,23 @@ from typing import Optional
 
 class ResultsParam(Results):
     best_values_buffer: vd.Buffer
+    best_mip_values_buffer: vd.Buffer
     compiled: bool
     compiled_best_values: np.ndarray
+    compiled_best_mip_values: np.ndarray
 
     def __init__(self, batch_count: int, total_indicies: int) -> None:
         self.best_values_buffer = vd.Buffer((batch_count, total_indicies, ), vd.float32)
+        self.best_mip_values_buffer = vd.Buffer((batch_count, total_indicies, ), vd.float32)
         self.compiled = False
         self.reset()
     
     def reset(self):
         self.best_values_buffer.write(
             (np.ones(shape=self.best_values_buffer.shape) * -1000000).astype(np.float32)
+        )
+        self.best_mip_values_buffer.write(
+            (np.ones(shape=self.best_mip_values_buffer.shape) * -1000000).astype(np.float32)
         )
     
     def check_comparison(self, comparison_buffer: vd.RFFTBuffer, *indicies: vc.Var[vc.i32]):
@@ -78,11 +84,12 @@ class ResultsParam(Results):
             return result
 
         def update_best_value_func(
-                buff: Buff[f32],
-                maxes_buff: Buff[f32],
-                sums_buff: Buff[f32],
-                sum2s_buff: Buff[f32],
-                *indicies: Var[i32]):
+            zscore_buff: Buff[f32],
+            mip_buff: Buff[f32],
+            maxes_buff: Buff[f32],
+            sums_buff: Buff[f32],
+            sum2s_buff: Buff[f32],
+            *indicies: Var[i32]):
             ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
 
             for i in range(template_count):
@@ -95,15 +102,17 @@ class ResultsParam(Results):
                 var_val = vc.max(sum2s_buff[input_index] / float(pixel_count) - mean_val * mean_val, 0.0).to_register()
                 z_score = ((maxes_buff[input_index] - mean_val) / vc.sqrt(var_val + 1e-6)).to_register()
 
-                vc.if_statement(z_score > buff[output_index])
-                buff[output_index] = z_score
+                vc.if_statement(z_score > zscore_buff[output_index])
+                zscore_buff[output_index] = z_score
+                mip_buff[output_index] = maxes_buff[input_index]
                 vc.end()
 
                 vc.end()
 
         with vd.shader_context() as ctx:
             input_args = ctx.declare_input_arguments([
-                Buff[f32],  # buff
+                Buff[f32],  # zscore_buff
+                Buff[f32],  # mip_buff
                 Buff[f32],  # maxes_buff
                 Buff[f32],  # sums_buff
                 Buff[f32],  # sum2s_buff
@@ -122,6 +131,7 @@ class ResultsParam(Results):
 
         update_best_value_shader(
             self.best_values_buffer,
+            self.best_mip_values_buffer,
             max_values_buff,
             sum_values_buff,
             sum2_values_buff,
@@ -132,15 +142,31 @@ class ResultsParam(Results):
         # We do an element wise max reduction on the buffer because
         # each of the devices will have only written to a portion of the buffer
         # (which is unique to each device). So this will give us the full combined result.
-        self.compiled_best_values = np.max(np.array(self.best_values_buffer.read()), axis=0)
+        all_best_values = np.array(self.best_values_buffer.read())
+        all_best_mips = np.array(self.best_mip_values_buffer.read())
+
+        # Select the device slot that produced the winning z-score, then read both
+        # z-score and matching MIP from that same slot.
+        max_indices = np.argmax(all_best_values, axis=0)
+        gather_indices = np.expand_dims(max_indices, axis=0)
+        self.compiled_best_values = np.take_along_axis(all_best_values, gather_indices, axis=0)[0]
+        self.compiled_best_mip_values = np.take_along_axis(all_best_mips, gather_indices, axis=0)[0]
 
         self.compiled = True
     
+    def get_zscore_list(self, params: ParamSet):
+        if not self.compiled:
+            self.compile_results()
+
+        flat_zscore = self.compiled_best_values[:, :params.get_total_count()]
+        zscore_shape = params._get_tensor_shape(flat_zscore.shape[0])[:-1]
+        return flat_zscore.reshape(zscore_shape)
+
     def get_mip_list(self, params: ParamSet):
         if not self.compiled:
             self.compile_results()
 
-        flat_mip = self.compiled_best_values[:, :params.get_total_count()]
+        flat_mip = self.compiled_best_mip_values[:, :params.get_total_count()]
         mip_shape = params._get_tensor_shape(flat_mip.shape[0])[:-1]
         return flat_mip.reshape(mip_shape)
 
