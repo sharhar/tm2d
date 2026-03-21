@@ -6,56 +6,63 @@ import numpy as np
 
 from .plan import Comparator
 
+def do_data_crop(io_index: Var[u32],
+                 register: Var[c64],
+                 micrograph_shape: tuple[int, int, int],
+                 template_shape: tuple,
+                 input: Buff[f32],
+                 sum_buffer: Buff[c64]) -> v2:
+    template_index = io_index // (micrograph_shape[1] * (micrograph_shape[2] + 2))
+    ind = vc.new_uint_register(io_index % (micrograph_shape[1] * (micrograph_shape[2] + 2)))
+    ind[:] = ind - 2 * (ind // micrograph_shape[2])
+
+    out_x = (ind // micrograph_shape[2]) % micrograph_shape[1]
+    out_y = ind % micrograph_shape[2]
+
+    in_coords = vc.new_uvec2_register()
+    
+    vc.if_any(vc.logical_and(
+                out_x >= template_shape[0] // 2,
+                out_x < micrograph_shape[1] - template_shape[0] // 2),
+            vc.logical_and(
+                out_y >= template_shape[1] // 2,
+                out_y < micrograph_shape[2] - template_shape[1] // 2))
+
+    register.real = 0.0
+    register.imag = 0.0
+    vc.else_statement()
+
+    vc.if_statement(out_x < micrograph_shape[1] // 2)
+    in_coords.x = out_x
+    vc.else_statement()
+    in_coords.x = template_shape[0] + out_x - micrograph_shape[1]
+    vc.end()
+
+    vc.if_statement(out_y < micrograph_shape[2] // 2)
+    in_coords.y = out_y
+    vc.else_statement()
+    in_coords.y = template_shape[1] + out_y - micrograph_shape[2]
+    vc.end()
+
+    in_coords.x = in_coords.x * template_shape[1] + in_coords.y
+
+    register[:] = sum_buffer[template_index] / (template_shape[0] * template_shape[1])
+    register.imag = vc.sqrt(register.imag - register.real * register.real)
+
+    in_coords.x = in_coords.x + 2 * (in_coords.x // (template_shape[1]))
+
+    in_coords.x = in_coords.x + template_index * (micrograph_shape[1] * (micrograph_shape[2] + 2))
+
+    register.real = (input[in_coords.x] - register.real) / register.imag
+    register.imag = 0
+
+    vc.end()
+
 def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tuple) -> vd.MappingFunction:
     @vd.map
     def crop_mapping(input: Buff[f32], sum_buffer: Buff[c64]):
         read_op = vd.fft.read_op()
-
-        template_index = read_op.io_index // (micrograph_shape[1] * (micrograph_shape[2] + 2))
-        ind = vc.new_uint_register(read_op.io_index % (micrograph_shape[1] * (micrograph_shape[2] + 2)))
-        ind[:] = ind - 2 * (ind // micrograph_shape[2])
-
-        out_x = (ind // micrograph_shape[2]) % micrograph_shape[1]
-        out_y = ind % micrograph_shape[2]
-
-        in_coords = vc.new_uvec2_register()
-        
-        vc.if_any(vc.logical_and(
-                    out_x >= template_shape[0] // 2,
-                    out_x < micrograph_shape[1] - template_shape[0] // 2),
-                vc.logical_and(
-                    out_y >= template_shape[1] // 2,
-                    out_y < micrograph_shape[2] - template_shape[1] // 2))
-
-        read_op.register.real = 0.0
-        read_op.register.imag = 0.0
-        vc.else_statement()
-
-        vc.if_statement(out_x < micrograph_shape[1] // 2)
-        in_coords.x = out_x
-        vc.else_statement()
-        in_coords.x = template_shape[0] + out_x - micrograph_shape[1]
-        vc.end()
-
-        vc.if_statement(out_y < micrograph_shape[2] // 2)
-        in_coords.y = out_y
-        vc.else_statement()
-        in_coords.y = template_shape[1] + out_y - micrograph_shape[2]
-        vc.end()
-
-        in_coords.x = in_coords.x * template_shape[1] + in_coords.y
-
-        read_op.register[:] = sum_buffer[template_index] / (template_shape[0] * template_shape[1])
-        read_op.register.imag = vc.sqrt(read_op.register.imag - read_op.register.real * read_op.register.real)
-
-        in_coords.x = in_coords.x + 2 * (in_coords.x // (template_shape[1]))
-
-        in_coords.x = in_coords.x + template_index * (micrograph_shape[1] * (micrograph_shape[2] + 2))
-
-        read_op.register.real = (input[in_coords.x] - read_op.register.real) / read_op.register.imag
-        read_op.register.imag = 0
-
-        vc.end()
+        do_data_crop(read_op.io_index, read_op.register, micrograph_shape, template_shape, input, sum_buffer)
 
     return crop_mapping
 

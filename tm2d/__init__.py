@@ -28,3 +28,6 @@ from .simulators.image import get_im_from_pdf
 from .plan import Plan, Template, Comparator, Results, ParamSet
 
 from .plan_standard import PlanStandard
+
+
+disable_kernel_fusion = False
