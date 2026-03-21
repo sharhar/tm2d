@@ -190,12 +190,7 @@ class TemplateAtomic(Template):
                 input_map=map_int_to_float
             )
 
-        def ctf_map_func(*in_args: Var):
-            read_op = vd.fft.read_op()
-
-            tid = read_op.io_index
-            value = read_op.register
-
+        def ctf_do_func(tid: Var[u32], value: Var[c64], ctf_index: int, *in_args: Var):
             my_pixel_size = in_args[0]
             
             value[:] = value * gaussian_filter(
@@ -219,32 +214,63 @@ class TemplateAtomic(Template):
             ctf = ctf_filter(
                 template_buffer.shape[1:],
                 pos_2d,
-                ctf_param_list[vd.fft.mapped_kernel_index()],
+                ctf_param_list[ctf_index],
                 my_pixel_size
             )
 
             value[:] = vc.mult_complex(value, ctf)
 
-        ctf_map = vd.map(ctf_map_func, input_types = [pixel_size_type] + ctf_params.get_type_list(template_count))
+        # if tm2d.disable_kernel_fusion:
+        vd.fft.fft(template_buffer, axis=1, buffer_shape=(1, *template_buffer.shape[1:]))
 
-        @vd.map
-        def output_map_func(output_buffer: vc.Buffer[c64]):
-            write_op = vd.fft.write_op()
+        with vd.shader_context() as ctx:
+            in_args = ctx.declare_input_arguments([
+                Buff[c64],
+                pixel_size_type,
+                *ctf_params.get_type_list(template_count)
+            ])
 
-            output_buffer[write_op.io_index + template_buffer.shape[1] * template_buffer.shape[2] * vd.fft.mapped_kernel_index()] = write_op.register
+            buff = in_args[0]
+            pix_size = in_args[1]
 
-        vd.fft.convolve(
-            template_buffer,
-            template_buffer,
-            pixel_size,
-            *ctf_params.get_args(cmd_graph, template_count),
-            kernel_map=ctf_map,
-            axis=1,
-            output_map=output_map_func,
-            kernel_num=template_buffer.shape[0],
-            buffer_shape=(1, *template_buffer.shape[1:]),
-            normalize=False
-        )
+            tid = vc.global_invocation_id().x
+            img_val = buff[tid].to_register()
+
+            for kernel_index in range(template_buffer.shape[0]):
+                result_val = img_val.to_register()
+                ctf_do_func(tid, result_val, kernel_index, pix_size, *in_args[2:])
+                buff[tid + template_buffer.shape[1] * template_buffer.shape[2] * kernel_index] = result_val
+
+        ctx.get_function()(template_buffer, pixel_size, *ctf_params.get_args(cmd_graph, template_count), exec_size=template_buffer.shape[1] * template_buffer.shape[2])
+
+        vd.fft.ifft(template_buffer, axis=1)
+        # else:
+        #     @vd.map
+        #     def output_map_func(output_buffer: vc.Buffer[c64]):
+        #         write_op = vd.fft.write_op()
+
+        #         output_buffer[write_op.io_index + template_buffer.shape[1] * template_buffer.shape[2] * vd.fft.mapped_kernel_index()] = write_op.register
+
+        #     vd.fft.convolve(
+        #         template_buffer,
+        #         template_buffer,
+        #         pixel_size,
+        #         *ctf_params.get_args(cmd_graph, template_count),
+        #         kernel_map=vd.map(
+        #             func=lambda *args: ctf_do_func(
+        #                 vd.fft.read_op().io_index,
+        #                 vd.fft.read_op().register,
+        #                 vd.fft.mapped_kernel_index(),
+        #                 *args
+        #             ),
+        #             input_types=[pixel_size_type] + ctf_params.get_type_list(template_count)
+        #         ),
+        #         axis=1,
+        #         output_map=output_map_func,
+        #         kernel_num=template_buffer.shape[0],
+        #         buffer_shape=(1, *template_buffer.shape[1:]),
+        #         normalize=False
+        #     )
 
         vd.fft.irfft(template_buffer, normalize=False)
 
