@@ -82,27 +82,64 @@ def gaussian_filter(buffer_shape: tuple[int, int], tid: vc.ShaderVariable, pixel
 
     return my_dist
 
+def apply_ctf_params(ctf_params: CTFParams,
+                template_shape: tuple[int, int, int],
+                disable_ctf: bool,
+                tid: Var[u32],
+                value: Var[c64],
+                ctf_index: int,
+                pixel_size: Var[f32],
+                *in_args: Var):
+    value[:] = value * gaussian_filter(
+        template_shape[1:],
+        tid,
+        pixel_size
+    )
+
+    if disable_ctf:
+        return
+
+    upos_2d = vc.new_uvec2_register()
+    upos_2d.x = tid % template_shape[2]
+    upos_2d.y = ((tid // template_shape[2]) + template_shape[1] // 2) % template_shape[1]
+    
+    pos_2d = upos_2d.to_dtype(vc.v2).to_register()
+    pos_2d.y = pos_2d.y - template_shape[1] // 2
+
+    ctf_param_list = ctf_params.assemble_params_list_from_args(in_args, template_shape[0])
+
+    ctf = ctf_filter(
+        template_shape[1:],
+        pos_2d,
+        ctf_param_list[ctf_index],
+        pixel_size
+    )
+
+    value[:] = vc.mult_complex(value, ctf)
 
 class TemplateAtomic(Template):
     shape: Tuple[int, int]
     atomic_coords: np.ndarray
     atomic_coords_buffer: vd.Buffer
-    disable_ctf: bool = False
-    disable_convolution: bool = False
-    disable_sigma_e: bool = False
+    disable_ctf: bool
+    disable_convolution: bool
+    disable_sigma_e: bool
+    fuse_ctf_convolution: bool
 
     def __init__(self,
                  shape: Tuple[int, int],
                  atomic_coords: np.ndarray,
                  disable_ctf: bool = False,
                  disable_convolution: bool = False,
-                 disable_sigma_e: bool = False):
+                 disable_sigma_e: bool = False,
+                 fuse_ctf_convolution: bool = False):
         assert len(shape) == 2, "Shape must be a tuple of two integers (height, width)."
         assert atomic_coords.ndim == 2 and atomic_coords.shape[1] == 3, "Atomic coordinates must be a 2D array with shape (N, 3)."
 
         self.disable_ctf = disable_ctf
         self.disable_convolution = disable_convolution
         self.disable_sigma_e = disable_sigma_e
+        self.fuse_ctf_convolution = fuse_ctf_convolution
 
         self.shape = (shape[0], shape[1])
         self.atomic_coords = atomic_coords.astype(np.float32)
@@ -119,10 +156,12 @@ class TemplateAtomic(Template):
 
         template_buffer = vd.RFFTBuffer((template_count, *self.shape))
 
+        template_area = template_buffer.shape[1] * template_buffer.shape[2]
+
         rotation_type: type = vc.Const[vc.m4] if isinstance(rotations, np.ndarray) else vc.Var[vc.m4]
         pixel_size_type: type = vc.Const[vd.float32] if isinstance(pixel_size, float) else vc.Var[vd.float32]
         
-        @vd.shader(exec_size=lambda args: args.atom_coords.shape[0])
+        @vd.shader("atom_coords.shape[0]")
         def place_atoms(image: Buff[i32], atom_coords: Buff[f32], rot_matrix: rotation_type, my_pixel_size: pixel_size_type): # type: ignore
             ind = vc.global_invocation_id().x.to_register()
 
@@ -176,61 +215,72 @@ class TemplateAtomic(Template):
             input_map=map_int_to_float
         )
 
-        def ctf_map_func(*in_args: Var):
-            read_op = vd.fft.read_op()
-
-            tid = read_op.io_index
-            value = read_op.register
-
-            my_pixel_size = in_args[0]
-            
-            value[:] = value * gaussian_filter(
-                template_buffer.shape[1:],
-                tid,
-                my_pixel_size
+        if self.fuse_ctf_convolution:
+            vd.fft.convolve(
+                template_buffer,
+                template_buffer,
+                pixel_size,
+                *ctf_params.get_args(cmd_graph, template_count),
+                
+                buffer_shape=(1, *template_buffer.shape[1:]),
+                axis=1,
+                normalize=False,
+                
+                kernel_num=template_buffer.shape[0],
+                kernel_map=vd.map(
+                    func=lambda *args: apply_ctf_params(
+                        ctf_params,
+                        template_buffer.shape,
+                        self.disable_ctf,
+                        vd.fft.read_op().io_index,
+                        vd.fft.read_op().register,
+                        vd.fft.mapped_kernel_index(),
+                        *args # pixel size is the first argument, followed by the ctf params
+                    ),
+                    input_types=[pixel_size_type] + ctf_params.get_type_list(template_count)
+                ),
+                
+                output_map=vd.map(
+                    func=lambda buff: vd.fft.write_op().write_to_buffer(
+                        buffer=buff,
+                        io_index=vd.fft.write_op().io_index + template_area * vd.fft.mapped_kernel_index()
+                    ),
+                    input_types=[vc.Buffer[c64]]
+                )
             )
+        else:
+            vd.fft.fft(template_buffer, axis=1, buffer_shape=(1, *template_buffer.shape[1:]))
 
-            if self.disable_ctf:
-                return
+            with vd.shader_context() as ctx:
+                in_args = ctx.declare_input_arguments([
+                    Buff[c64],
+                    pixel_size_type,
+                    *ctf_params.get_type_list(template_count)
+                ])
 
-            upos_2d = vc.new_uvec2_register()
-            upos_2d.x = tid % template_buffer.shape[2]
-            upos_2d.y = ((tid // template_buffer.shape[2]) + template_buffer.shape[1] // 2) % template_buffer.shape[1]
-            
-            pos_2d = upos_2d.to_dtype(vc.v2).to_register()
-            pos_2d.y = pos_2d.y - template_buffer.shape[1] // 2
+                buff = in_args[0]
+                pix_size = in_args[1]
 
-            ctf_param_list = ctf_params.assemble_params_list_from_args(in_args[1:], template_count)
+                tid = vc.global_invocation_id().x
+                img_val = buff[tid].to_register()
 
-            ctf = ctf_filter(
-                template_buffer.shape[1:],
-                pos_2d,
-                ctf_param_list[vd.fft.mapped_kernel_index()],
-                my_pixel_size
-            )
+                for kernel_index in range(template_buffer.shape[0]):
+                    result_val = img_val.to_register()
+                    apply_ctf_params(
+                        ctf_params,
+                        template_buffer.shape,
+                        self.disable_ctf,
+                        tid,
+                        result_val,
+                        kernel_index,
+                        pix_size,
+                        *in_args[2:]
+                    )
+                    buff[tid + template_buffer.shape[1] * template_buffer.shape[2] * kernel_index] = result_val
 
-            value[:] = vc.mult_complex(value, ctf)
+            ctx.get_function()(template_buffer, pixel_size, *ctf_params.get_args(cmd_graph, template_count), exec_size=template_buffer.shape[1] * template_buffer.shape[2])
 
-        ctf_map = vd.map(ctf_map_func, input_types = [pixel_size_type] + ctf_params.get_type_list(template_count))
-
-        @vd.map
-        def output_map_func(output_buffer: vc.Buffer[c64]):
-            write_op = vd.fft.write_op()
-
-            output_buffer[write_op.io_index + template_buffer.shape[1] * template_buffer.shape[2] * vd.fft.mapped_kernel_index()] = write_op.register
-
-        vd.fft.convolve(
-            template_buffer,
-            template_buffer,
-            pixel_size,
-            *ctf_params.get_args(cmd_graph, template_count),
-            kernel_map=ctf_map,
-            axis=1,
-            output_map=output_map_func,
-            kernel_num=template_buffer.shape[0],
-            buffer_shape=(1, *template_buffer.shape[1:]),
-            normalize=False
-        )
+            vd.fft.ifft(template_buffer, axis=1)
 
         vd.fft.irfft(template_buffer, normalize=False)
 
