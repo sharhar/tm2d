@@ -46,7 +46,7 @@ def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
 
     return in_matricies.T
 
-@vd.shader(exec_size=lambda args: args.buf.size)
+@vd.shader("buf.size")
 def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):
     buf[vc.global_invocation_id().x] = val
 
@@ -159,22 +159,36 @@ class TemplateAtomic(Template):
 
             return template_buffer
 
-        @vd.map
-        def map_int_to_float(buff: Buff[f32]):
-            read_op = vd.fft.read_op()
+        if tm2d.disable_kernel_fusion:
+            @vd.shader()
+            def reinterp_ints(buff: Buff[f32]):
+                tid = vc.global_invocation_id().x
+                buff[tid] = vc.float_bits_to_int(buff[tid]).to_dtype(vd.float32) * my_sigma_e
 
-            value = vc.float_bits_to_int(buff[read_op.io_index]).to_dtype(vd.float32) * my_sigma_e
+            reinterp_ints(template_buffer, exec_size=self.shape[0] * (self.shape[1] + 2))
 
-            read_op.register.real = value
-            read_op.register.imag = 0.0
+            vd.fft.fft(
+                template_buffer,
+                buffer_shape=self.shape,
+                r2c=True
+            )
+        else:
+            @vd.map
+            def map_int_to_float(buff: Buff[f32]):
+                read_op = vd.fft.read_op()
 
-        vd.fft.fft(
-            template_buffer,
-            template_buffer,
-            buffer_shape=self.shape,
-            r2c=True,
-            input_map=map_int_to_float
-        )
+                value = vc.float_bits_to_int(buff[read_op.io_index]).to_dtype(vd.float32) * my_sigma_e
+
+                read_op.register.real = value
+                read_op.register.imag = 0.0
+
+            vd.fft.fft(
+                template_buffer,
+                template_buffer,
+                buffer_shape=self.shape,
+                r2c=True,
+                input_map=map_int_to_float
+            )
 
         def ctf_map_func(*in_args: Var):
             read_op = vd.fft.read_op()

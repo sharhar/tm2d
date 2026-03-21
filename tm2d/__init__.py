@@ -1,5 +1,5 @@
 
-disable_kernel_fusion = True
+disable_kernel_fusion = False
 
 
 from .micrograph import make_micrograph_signal_2d, StaticSignal2D
