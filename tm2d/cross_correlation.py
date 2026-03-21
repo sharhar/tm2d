@@ -79,7 +79,7 @@ class ComparatorCrossCorrelation(Comparator):
 
         self.crop_mapping = make_crop_mapping(shape, template_shape)
 
-        @vd.shader("out.size * 2")
+        @vd.shader()
         def do_unfused_crop(out: Buff[f32], input: Buff[f32], sum_buffer: Buff[c64]):
             tid = vc.global_invocation_id().x
 
@@ -127,21 +127,23 @@ class ComparatorCrossCorrelation(Comparator):
         
         template_sum = calc_sums(template_buffer)
 
-        in_buffer_shape = (
+        in_real_buffer_shape = (
             template_buffer.shape[0],
             self.micrographs_buffer.real_shape[1],
             self.micrographs_buffer.real_shape[2]
         )
 
         if tm2d.disable_kernel_fusion:
-            self.unfused_crop_shader(correlation_signal, template_buffer, template_sum)
-            vd.fft.rfft(correlation_signal)
+            exec_count = template_buffer.shape[0] * self.micrographs_buffer.real_shape[1] * (self.micrographs_buffer.real_shape[2] + 2)
+
+            self.unfused_crop_shader(correlation_signal, template_buffer, template_sum, exec_size=exec_count)
+            vd.fft.fft(correlation_signal, buffer_shape=in_real_buffer_shape, r2c=True)
         else:
             vd.fft.fft(
                 correlation_signal,
                 template_buffer,
                 template_sum,
-                buffer_shape=in_buffer_shape,
+                buffer_shape=in_real_buffer_shape,
                 input_map=self.crop_mapping,
                 r2c=True
             )
@@ -156,29 +158,45 @@ class ComparatorCrossCorrelation(Comparator):
             self.micrographs_buffer.shape[1] * self.micrographs_buffer.shape[2]
         )
 
-        @vd.map
-        def convolution_map(kernel_buffer: vc.Buffer[c64]):
-            img_val = vd.fft.read_op().register
-            read_register = vc.new_complex64_register()
+        if tm2d.disable_kernel_fusion:
+            vd.fft.fft(correlation_signal, axis=1, buffer_shape=in_buffer_shape)
 
-            read_register[:] = kernel_buffer[vd.fft.read_op().io_index % kernel_offset + kernel_offset * vd.fft.mapped_kernel_index()]
-            img_val[:] = vc.mult_complex(read_register, img_val.conjugate())
+            @vd.shader()
+            def multiply_conjugate_kernel(corr_buff: Buff[c64], kernel_buffer: Buff[c64]):
+                tid = vc.global_invocation_id().x
+                img_val = corr_buff[tid]
 
-        @vd.map
-        def output_map_func(output_buffer: vc.Buffer[c64]):
-            out_reg = vd.fft.write_op().register
-            output_buffer[vd.fft.write_op().io_index + kernel_offset * template_buffer.shape[0] * vd.fft.mapped_kernel_index()] = out_reg
+                for kernel_index in range(self.micrographs_buffer.shape[0]):
+                    kernel_val = kernel_buffer[tid % kernel_offset + kernel_offset * kernel_index].to_register()
+                    corr_buff[tid + kernel_offset * template_buffer.shape[0] * kernel_index] = vc.mult_complex(kernel_val, img_val.conjugate())
 
-        vd.fft.convolve(
-            correlation_signal,
-            correlation_signal,
-            self.micrographs_buffer,
-            kernel_num=self.micrographs_buffer.shape[0],
-            axis=1,
-            buffer_shape=in_buffer_shape,
-            kernel_map=convolution_map,
-            output_map=output_map_func
-        )
+            multiply_conjugate_kernel(correlation_signal, self.micrographs_buffer, exec_size=np.prod(in_buffer_shape))
+
+            vd.fft.ifft(correlation_signal, axis=1)
+        else:
+            @vd.map
+            def convolution_map(kernel_buffer: vc.Buffer[c64]):
+                img_val = vd.fft.read_op().register
+                read_register = vc.new_complex64_register()
+
+                read_register[:] = kernel_buffer[vd.fft.read_op().io_index % kernel_offset + kernel_offset * vd.fft.mapped_kernel_index()]
+                img_val[:] = vc.mult_complex(read_register, img_val.conjugate())
+
+            @vd.map
+            def output_map_func(output_buffer: vc.Buffer[c64]):
+                out_reg = vd.fft.write_op().register
+                output_buffer[vd.fft.write_op().io_index + kernel_offset * template_buffer.shape[0] * vd.fft.mapped_kernel_index()] = out_reg
+
+            vd.fft.convolve(
+                correlation_signal,
+                correlation_signal,
+                self.micrographs_buffer,
+                kernel_num=self.micrographs_buffer.shape[0],
+                axis=1,
+                buffer_shape=in_buffer_shape,
+                kernel_map=convolution_map,
+                output_map=output_map_func
+            )
         
         vd.fft.irfft(correlation_signal)
 
