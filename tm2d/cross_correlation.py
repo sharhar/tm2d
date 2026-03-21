@@ -4,12 +4,14 @@ from vkdispatch.codegen.abreviations import *
 
 import numpy as np
 
+import tm2d
+
 from .plan import Comparator
 
 def do_data_crop(io_index: Var[u32],
-                 register: Var[c64],
+                 register: Var[f32],
                  micrograph_shape: tuple[int, int, int],
-                 template_shape: tuple,
+                 template_shape: tuple[int, int, int],
                  input: Buff[f32],
                  sum_buffer: Buff[c64]) -> v2:
     template_index = io_index // (micrograph_shape[1] * (micrograph_shape[2] + 2))
@@ -28,8 +30,7 @@ def do_data_crop(io_index: Var[u32],
                 out_y >= template_shape[1] // 2,
                 out_y < micrograph_shape[2] - template_shape[1] // 2))
 
-    register.real = 0.0
-    register.imag = 0.0
+    register[:] = 0.0
     vc.else_statement()
 
     vc.if_statement(out_x < micrograph_shape[1] // 2)
@@ -46,15 +47,14 @@ def do_data_crop(io_index: Var[u32],
 
     in_coords.x = in_coords.x * template_shape[1] + in_coords.y
 
-    register[:] = sum_buffer[template_index] / (template_shape[0] * template_shape[1])
-    register.imag = vc.sqrt(register.imag - register.real * register.real)
+    sum_vals = (sum_buffer[template_index] / (template_shape[0] * template_shape[1])).to_register()
+    sum_vals.imag = vc.sqrt(sum_vals.imag - sum_vals.real * sum_vals.real)
 
     in_coords.x = in_coords.x + 2 * (in_coords.x // (template_shape[1]))
 
     in_coords.x = in_coords.x + template_index * (micrograph_shape[1] * (micrograph_shape[2] + 2))
 
-    register.real = (input[in_coords.x] - register.real) / register.imag
-    register.imag = 0
+    register[:] = (input[in_coords.x] - sum_vals.real) / sum_vals.imag
 
     vc.end()
 
@@ -62,7 +62,8 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
     @vd.map
     def crop_mapping(input: Buff[f32], sum_buffer: Buff[c64]):
         read_op = vd.fft.read_op()
-        do_data_crop(read_op.io_index, read_op.register, micrograph_shape, template_shape, input, sum_buffer)
+        do_data_crop(read_op.io_index, read_op.register.real, micrograph_shape, template_shape, input, sum_buffer)
+        read_op.register.imag = 0.0
 
     return crop_mapping
 
@@ -77,6 +78,14 @@ class ComparatorCrossCorrelation(Comparator):
         self.micrographs_buffer = vd.RFFTBuffer(shape)
 
         self.crop_mapping = make_crop_mapping(shape, template_shape)
+
+        @vd.shader("out.size * 2")
+        def do_unfused_crop(out: Buff[f32], input: Buff[f32], sum_buffer: Buff[c64]):
+            tid = vc.global_invocation_id().x
+
+            do_data_crop(tid, out[tid], shape, template_shape, input, sum_buffer)
+
+        self.unfused_crop_shader = do_unfused_crop
 
     def set_data(self, data: np.ndarray):
         if data.ndim == 2:
@@ -124,14 +133,18 @@ class ComparatorCrossCorrelation(Comparator):
             self.micrographs_buffer.real_shape[2]
         )
 
-        vd.fft.fft(
-            correlation_signal,
-            template_buffer,
-            template_sum,
-            buffer_shape=in_buffer_shape,
-            input_map=self.crop_mapping,
-            r2c=True
-        )
+        if tm2d.disable_kernel_fusion:
+            self.unfused_crop_shader(correlation_signal, template_buffer, template_sum)
+            vd.fft.rfft(correlation_signal)
+        else:
+            vd.fft.fft(
+                correlation_signal,
+                template_buffer,
+                template_sum,
+                buffer_shape=in_buffer_shape,
+                input_map=self.crop_mapping,
+                r2c=True
+            )
 
         in_buffer_shape = (
             template_buffer.shape[0],

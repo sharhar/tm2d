@@ -1,3 +1,7 @@
+
+disable_kernel_fusion = True
+
+
 from .micrograph import make_micrograph_signal_2d, StaticSignal2D
 
 from .ctf import CTFParams
@@ -29,5 +33,3 @@ from .plan import Plan, Template, Comparator, Results, ParamSet
 
 from .plan_standard import PlanStandard
 
-
-disable_kernel_fusion = False
