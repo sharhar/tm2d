@@ -1,6 +1,6 @@
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abreviations import *
+from vkdispatch.codegen.abbreviations import *
 
 import numpy as np
 
@@ -282,7 +282,7 @@ class ResultsPixel(Results):
             best_index[ind] = best_index_register
             vc.end()
 
-        with vd.shader_context() as ctx:
+        with vc.shader_context() as ctx:
             input_args = ctx.declare_input_arguments([
                 Buff[f32],  # max_cross
                 Buff[i32],  # best_index
@@ -294,9 +294,9 @@ class ResultsPixel(Results):
 
             update_max_func(*input_args)
 
-            update_max_shader = ctx.get_function(
-                exec_count=self.max_cross.size,
-                name="update_max_func"
+            update_max_shader = vd.make_shader_function(
+                description=ctx.get_description(name="update_max_func"),
+                exec_count=self.max_cross.size
             )
         
         update_max_shader(

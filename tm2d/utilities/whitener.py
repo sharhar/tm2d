@@ -1,7 +1,7 @@
 import numpy as np
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abreviations import *
+from vkdispatch.codegen.abbreviations import *
 
 def freq_axes(shape: tuple, pixel_size: float = None):
     if pixel_size is None:

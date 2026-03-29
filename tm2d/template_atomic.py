@@ -1,6 +1,6 @@
 import vkdispatch as vd 
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abreviations import *
+from vkdispatch.codegen.abbreviations import *
 
 from typing import Tuple, List
 
@@ -251,7 +251,7 @@ class TemplateAtomic(Template):
         else:
             vd.fft.fft(template_buffer, axis=1, buffer_shape=(1, *template_buffer.shape[1:]))
 
-            with vd.shader_context() as ctx:
+            with vc.shader_context() as ctx:
                 in_args = ctx.declare_input_arguments([
                     Buff[c64],
                     pixel_size_type,
@@ -278,7 +278,13 @@ class TemplateAtomic(Template):
                     )
                     buff[tid + template_buffer.shape[1] * template_buffer.shape[2] * kernel_index] = result_val
 
-            ctx.get_function()(template_buffer, pixel_size, *ctf_params.get_args(cmd_graph, template_count), exec_size=template_buffer.shape[1] * template_buffer.shape[2])
+            vd.make_shader_function(ctx.get_description())(
+                template_buffer,
+                pixel_size,
+                *ctf_params.get_args(cmd_graph, template_count),
+                
+                exec_size=template_buffer.shape[1] * template_buffer.shape[2]
+            )
 
             vd.fft.ifft(template_buffer, axis=1)
 

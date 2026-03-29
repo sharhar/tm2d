@@ -2,7 +2,7 @@ import numpy as np
 
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abreviations import *
+from vkdispatch.codegen.abbreviations import *
 
 def load_coords_from_npz(file_path, remove_h: bool = True):
     atom_data = np.load(file_path)
