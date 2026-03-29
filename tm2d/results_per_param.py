@@ -6,8 +6,6 @@ import numpy as np
 
 from .plan import Results, ParamSet
 
-from typing import Optional
-
 class ResultsParam(Results):
     best_values_buffer: vd.Buffer
     best_mip_values_buffer: vd.Buffer
@@ -45,11 +43,11 @@ class ResultsParam(Results):
             ind = vd.reduce.mapped_io_index()
             result = vc.new_float_register(0)
 
-            vc.if_statement(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1)
-            result[:] = vc.max(buf[ind].real, buf[ind].imag)
-            vc.else_statement()
-            result[:] = 0.0
-            vc.end()
+            with vc.if_block(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1):
+                result[:] = vc.max(buf[ind].real, buf[ind].imag)
+            
+            with vc.else_block():
+                result[:] = 0.0
 
             return result
 
@@ -58,11 +56,11 @@ class ResultsParam(Results):
             ind = vd.reduce.mapped_io_index()
             result = vc.new_float_register(0)
 
-            vc.if_statement(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1)
-            result[:] = buf[ind].real + buf[ind].imag
-            vc.else_statement()
-            result[:] = 0.0
-            vc.end()
+            with vc.if_block(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1):
+                result[:] = buf[ind].real + buf[ind].imag
+            
+            with vc.else_block():
+                result[:] = 0.0
 
             return result
 
@@ -73,13 +71,13 @@ class ResultsParam(Results):
             val_real = vc.new_float_register(0)
             val_imag = vc.new_float_register(0)
 
-            vc.if_statement(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1)
-            val_real[:] = buf[ind].real
-            val_imag[:] = buf[ind].imag
-            result[:] = val_real * val_real + val_imag * val_imag
-            vc.else_statement()
-            result[:] = 0.0
-            vc.end()
+            with vc.if_block(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1):
+                val_real[:] = buf[ind].real
+                val_imag[:] = buf[ind].imag
+                result[:] = val_real * val_real + val_imag * val_imag
+            
+            with vc.else_block():
+                result[:] = 0.0
 
             return result
 
@@ -96,20 +94,16 @@ class ResultsParam(Results):
                 output_index = ind * self.best_values_buffer.shape[1] + indicies[i]
                 input_index = ind * template_count + i
 
-                vc.if_statement(indicies[i] >= 0)
+                with vc.if_block(indicies[i] >= 0):
+                    mean_val = (sums_buff[input_index] / float(pixel_count)).to_register()
+                    var_val = vc.max(sum2s_buff[input_index] / float(pixel_count) - mean_val * mean_val, 0.0).to_register()
+                    z_score = ((maxes_buff[input_index] - mean_val) / vc.sqrt(var_val + 1e-6)).to_register()
 
-                mean_val = (sums_buff[input_index] / float(pixel_count)).to_register()
-                var_val = vc.max(sum2s_buff[input_index] / float(pixel_count) - mean_val * mean_val, 0.0).to_register()
-                z_score = ((maxes_buff[input_index] - mean_val) / vc.sqrt(var_val + 1e-6)).to_register()
+                    with vc.if_block(z_score > zscore_buff[output_index]):
+                        zscore_buff[output_index] = z_score
+                        mip_buff[output_index] = maxes_buff[input_index]\
 
-                vc.if_statement(z_score > zscore_buff[output_index])
-                zscore_buff[output_index] = z_score
-                mip_buff[output_index] = maxes_buff[input_index]
-                vc.end()
-
-                vc.end()
-
-        with vd.shader_context() as ctx:
+        with vc.shader_context() as ctx:
             input_args = ctx.declare_input_arguments([
                 Buff[f32],  # zscore_buff
                 Buff[f32],  # mip_buff
@@ -120,10 +114,10 @@ class ResultsParam(Results):
 
             update_best_value_func(*input_args)
 
-            update_best_value_shader = ctx.get_function(
-                exec_count=self.best_values_buffer.shape[0],
-                name="update_best_value_func"
-            )
+        update_best_value_shader = vd.make_shader_function(
+            description=ctx.get_description("update_best_value_func"),
+            exec_count=self.best_values_buffer.shape[0]
+        )
 
         max_values_buff = find_best_mip(comparison_buffer)
         sum_values_buff = find_sum(comparison_buffer)

@@ -629,10 +629,10 @@ def phase_from_even_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff
     r = vc.sqrt(Sx_eff * Sx_eff + Sy_eff * Sy_eff).to_register()
     th = vc.atan2(Sy_eff, Sx_eff).to_register()
     for i in range(9):
-        vc.if_statement(params.get_even_coeff()[i] != 0.0)
-        m, n = _even_index_to_mn(i)
-        psi += params.get_even_coeff()[i] * _zernike_cart(m, n, r, th)
-        vc.end()
+        with vc.if_block(params.get_even_coeff()[i] != 0.0):
+            m, n = _even_index_to_mn(i)
+            psi += params.get_even_coeff()[i] * _zernike_cart(m, n, r, th)
+
     return psi
 
 def phase_from_odd_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff: vc.ShaderVariable) -> vc.ShaderVariable:
@@ -640,10 +640,10 @@ def phase_from_odd_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff:
     r = vc.sqrt(Sx_eff * Sx_eff + Sy_eff * Sy_eff).to_register()
     th = vc.atan2(Sy_eff, Sx_eff).to_register()
     for i in range(6):
-        vc.if_statement(params.get_odd_coeff()[i] != 0.0)
-        m, n = _odd_index_to_mn(i)
-        psi += params.get_odd_coeff()[i] * _zernike_cart(m, n, r, th)
-        vc.end()
+        with vc.if_block(params.get_odd_coeff()[i] != 0.0):
+            m, n = _odd_index_to_mn(i)
+            psi += params.get_odd_coeff()[i] * _zernike_cart(m, n, r, th)
+        
     return psi # [rad]
 
 def ctf_filter(
@@ -730,20 +730,15 @@ def ctf_filter(
     CTF = vc.complex_from_euler_angle(psi_odd).to_register()
     CTF.real *= CTF_scale
     CTF.imag *= CTF_scale
-    
-    #CTF.real = CTF_scale
-    #CTF.imag = 0
 
-    is_dc = vc.logical_and(Sx == 0.0, Sy == 0.0)
-    vc.if_statement(is_dc)
-    CTF.real = 0.0
-    CTF.imag = 0.0
-    vc.end()
+    with vc.if_block(vc.all(Sx == 0.0, Sy == 0.0)):
+        CTF.real = 0.0
+        CTF.imag = 0.0
     
     return CTF
 
 def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel_size: float):
-    with vd.shader_context() as ctx:
+    with vc.shader_context() as ctx:
         shader_args = ctx.declare_input_arguments([Buff[c64]] + ctf_params.get_type_list(1))
 
         buff = shader_args[0]
@@ -769,10 +764,11 @@ def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel
 
         buff[ind] = vc.mult_complex(buff[ind], ctf)
 
-        ctf_apply_shader = ctx.get_function(
-            exec_count=buffer.size,
-            name="apply_ctf_to_rfft_buffer"
+        ctf_apply_shader = vd.make_shader_function(
+            description=ctx.get_description("apply_ctf_to_rfft_buffer"),
+            exec_count=buffer.size
         )
+         
 
     ctf_apply_shader(buffer, *ctf_params.get_args(None, 1))
 

@@ -74,11 +74,11 @@ def gaussian_filter(buffer_shape: tuple[int, int], tid: vc.ShaderVariable, pixel
     my_dist = vc.new_float_register()
     my_dist[:] = (x_norm*x_norm + y_norm*y_norm) / ( var * 2 )
 
-    vc.if_statement(my_dist > 100)
-    my_dist[:] = 0
-    vc.else_statement()
-    my_dist[:] = amp * vc.exp(-my_dist) / (buffer_shape[0] * (buffer_shape[1] * 2 - 2))
-    vc.end()
+    with vc.if_block(my_dist > 100):
+        my_dist[:] = 0
+
+    with vc.else_block():
+        my_dist[:] = amp * vc.exp(-my_dist) / (buffer_shape[0] * (buffer_shape[1] * 2 - 2))
 
     return my_dist
 
@@ -177,9 +177,11 @@ class TemplateAtomic(Template):
             image_ind.y = vc.ceil(pos.y).to_dtype(vd.int32) + (image.shape.y // 2)
             image_ind.x = vc.ceil(-pos.x).to_dtype(vd.int32) + ((image.shape.z * 2 - 2) // 2)
 
-            vc.if_any(image_ind.x < 0, image_ind.x >= image.shape.y, image_ind.y < 0, image_ind.y >= (image.shape.z * 2 - 2))
-            vc.return_statement()
-            vc.end()
+            with vc.if_block(vc.any(
+                image_ind.x < 0, image_ind.x >= image.shape.y,
+                image_ind.y < 0, image_ind.y >= (image.shape.z * 2 - 2)
+            )):
+                vc.return_statement()
 
             vc.atomic_add(image[2 * image_ind.x * image.shape.z + image_ind.y], 1)
 
