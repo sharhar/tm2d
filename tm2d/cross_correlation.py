@@ -1,6 +1,6 @@
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abreviations import *
+from vkdispatch.codegen.abbreviations import *
 
 import numpy as np
 
@@ -20,42 +20,41 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
 
         in_coords = vc.new_uvec2_register()
         
-        vc.if_any(vc.logical_and(
-                    out_x >= template_shape[0] // 2,
-                    out_x < micrograph_shape[1] - template_shape[0] // 2),
-                vc.logical_and(
-                    out_y >= template_shape[1] // 2,
-                    out_y < micrograph_shape[2] - template_shape[1] // 2))
+        with vc.if_block(vc.any(
+            vc.all(
+                out_x >= template_shape[0] // 2,
+                out_x < micrograph_shape[1] - template_shape[0] // 2
+            ),
+            vc.all(
+                out_y >= template_shape[1] // 2,
+                out_y < micrograph_shape[2] - template_shape[1] // 2
+            )
+        )):
+            read_op.register.real = 0.0
+            read_op.register.imag = 0.0
+        
+        with vc.else_block():
+            with vc.if_block(out_x < micrograph_shape[1] // 2):
+                in_coords.x = out_x
+            with vc.else_block():
+                in_coords.x = template_shape[0] + out_x - micrograph_shape[1]
 
-        read_op.register.real = 0.0
-        read_op.register.imag = 0.0
-        vc.else_statement()
+            with vc.if_block(out_y < micrograph_shape[2] // 2):
+                in_coords.y = out_y
+            with vc.else_block():
+                in_coords.y = template_shape[1] + out_y - micrograph_shape[2]
 
-        vc.if_statement(out_x < micrograph_shape[1] // 2)
-        in_coords.x = out_x
-        vc.else_statement()
-        in_coords.x = template_shape[0] + out_x - micrograph_shape[1]
-        vc.end()
+            in_coords.x = in_coords.x * template_shape[1] + in_coords.y
 
-        vc.if_statement(out_y < micrograph_shape[2] // 2)
-        in_coords.y = out_y
-        vc.else_statement()
-        in_coords.y = template_shape[1] + out_y - micrograph_shape[2]
-        vc.end()
+            read_op.register[:] = sum_buffer[template_index] / (template_shape[0] * template_shape[1])
+            read_op.register.imag = vc.sqrt(read_op.register.imag - read_op.register.real * read_op.register.real)
 
-        in_coords.x = in_coords.x * template_shape[1] + in_coords.y
+            in_coords.x = in_coords.x + 2 * (in_coords.x // (template_shape[1]))
 
-        read_op.register[:] = sum_buffer[template_index] / (template_shape[0] * template_shape[1])
-        read_op.register.imag = vc.sqrt(read_op.register.imag - read_op.register.real * read_op.register.real)
+            in_coords.x = in_coords.x + template_index * (micrograph_shape[1] * (micrograph_shape[2] + 2))
 
-        in_coords.x = in_coords.x + 2 * (in_coords.x // (template_shape[1]))
-
-        in_coords.x = in_coords.x + template_index * (micrograph_shape[1] * (micrograph_shape[2] + 2))
-
-        read_op.register.real = (input[in_coords.x] - read_op.register.real) / read_op.register.imag
-        read_op.register.imag = 0
-
-        vc.end()
+            read_op.register.real = (input[in_coords.x] - read_op.register.real) / read_op.register.imag
+            read_op.register.imag = 0
 
     return crop_mapping
 
@@ -96,16 +95,13 @@ class ComparatorCrossCorrelation(Comparator):
 
             result = vc.new_vec2_register()
 
-            vc.if_statement(ind % template_buffer.shape[2] < template_buffer.shape[2] - 1)
+            with vc.if_block(ind % template_buffer.shape[2] < template_buffer.shape[2] - 1):
+                result.x = wave[ind].real + wave[ind].imag
+                result.y = wave[ind].real * wave[ind].real + wave[ind].imag * wave[ind].imag
 
-            result.x = wave[ind].real + wave[ind].imag
-            result.y = wave[ind].real * wave[ind].real + wave[ind].imag * wave[ind].imag
-            vc.else_statement()
-
-            result.x = 0.0
-            result.y = 0.0
-
-            vc.end()
+            with vc.else_block():
+                result.x = 0.0
+                result.y = 0.0
 
             return result
         

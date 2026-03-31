@@ -1,6 +1,6 @@
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abreviations import *
+from vkdispatch.codegen.abbreviations import *
 
 @vd.reduce.map_reduce(vd.reduce.SubgroupAdd)
 def calc_sums(wave: Buff[v2]) -> v2:
@@ -18,9 +18,9 @@ def calc_sums(wave: Buff[v2]) -> v2:
 
 @vd.shader(exec_size=lambda args: args.image.size)
 def apply_normalization(image: Buff[v2], sum_buff: Buff[v2]):
-    ind = vc.global_invocation().x.copy()
+    ind = vc.global_invocation_id().x.to_register()
 
-    sum_vec = (sum_buff[0] / (image.shape.x * image.shape.y)).copy()
+    sum_vec = (sum_buff[0] / (image.shape.x * image.shape.y)).to_register()
     sum_vec.y = vc.sqrt(sum_vec.y - sum_vec.x * sum_vec.x)
 
     image[ind].x = (image[ind].x - sum_vec.x) / sum_vec.y

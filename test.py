@@ -100,3 +100,16 @@ for i in range(results.count):
 
     for param_name, param_values in params.get_values_at_index(best_indicies).items():
         np.save(f"{output_dir}/{param_name}_{i}.npy", param_values)
+
+"""
+
+VKDISPATCH_BACKEND=vulkan python3 test.py data/output_sum
+
+Micrograph 0:
+        Max cross-correlation: 21996.779296875
+        Best B: 8
+        Best defocus: 12894
+        Best pixel_size: 1.058
+        Best rotation: [188.84183  78.82107 326.     ]
+
+"""

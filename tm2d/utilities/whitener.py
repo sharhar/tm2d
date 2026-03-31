@@ -1,7 +1,7 @@
 import numpy as np
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abreviations import *
+from vkdispatch.codegen.abbreviations import *
 
 def freq_axes(shape: tuple, pixel_size: float = None):
     if pixel_size is None:
@@ -271,23 +271,16 @@ def apply_whiten_filter(buff: Buff[c64], sums_buffer: Buff[f32], return_filter: 
 
     filter_value = vc.new_complex64_register(0.0)
 
-    vc.if_statement(psd > 1e-10)
-    filter_value.real = vc.sqrt(1 / psd)
-    filter_value.imag = filter_value.real
-    vc.end()
+    with vc.if_block(psd > 1e-10):
+        filter_value.real = vc.sqrt(1 / psd)
+        filter_value.imag = filter_value.real
 
-    vc.if_statement(return_filter == 1)
-    buff[ind] = filter_value
-    vc.else_statement()
-    buff[ind].real *= filter_value.real
-    buff[ind].imag *= filter_value.imag
-    vc.end()
-
-    #vc.if_statement(psd < 1e-10)
-    #buff[ind] = "vec2(0)"
-    #vc.else_statement()
-    #buff[ind] /= vc.sqrt(psd)
-    #vc.end()
+    with vc.if_block(return_filter == 1):
+        buff[ind] = filter_value
+    
+    with vc.else_block():
+        buff[ind].real *= filter_value.real
+        buff[ind].imag *= filter_value.imag
 
 def whiten_buffer(buffer: vd.Buffer, return_filter: bool = False):
     vd.fft.rfft2(buffer)

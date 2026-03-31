@@ -20,7 +20,7 @@ classifiers = [
 dependencies = [
     "setuptools>=59.0",
     "numpy",
-    "vkdispatch==0.0.34"
+    "vkdispatch==0.1.0"
 ]
 
 [project.urls]

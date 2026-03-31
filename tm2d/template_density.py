@@ -1,6 +1,6 @@
 import vkdispatch as vd 
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abreviations import *
+from vkdispatch.codegen.abbreviations import *
 
 import tm2d
 
@@ -13,16 +13,20 @@ from .ctf import CTFParams, ctf_filter
 
 import numpy as np
 
+# Templte density is deprecated for now, may come back to it later
+
+"""
+
 @vd.shader(exec_size=lambda args: args.input_buff.size * 2)
 def fftshift(output: vc.Buff[vc.f32], input_buff: vc.Buff[vc.f32]):
 
-    ind = vc.global_invocation().x.cast_to(vd.int32).copy()
+    ind = vc.global_invocation_id().x.to_dtype(vd.int32).to_register()
 
-    image_ind = vc.new_int()
+    image_ind = vc.new_int_register()
     image_ind[:] = ind % (input_buff.shape.y * input_buff.shape.z * 2)
 
-    out_x = (image_ind / (2 * input_buff.shape.z)).copy()
-    out_y = (image_ind % (2 * input_buff.shape.z)).copy()
+    out_x = (image_ind // (2 * input_buff.shape.z)).to_register()
+    out_y = (image_ind % (2 * input_buff.shape.z)).to_register()
 
     vc.if_statement(out_y >= 2 * input_buff.shape.z - 2)
     output[ind].x = 0
@@ -30,12 +34,12 @@ def fftshift(output: vc.Buff[vc.f32], input_buff: vc.Buff[vc.f32]):
     vc.return_statement()
     vc.end()
 
-    image_ind[:] = ind / (input_buff.shape.y * input_buff.shape.z * 2)
+    image_ind[:] = ind // (input_buff.shape.y * input_buff.shape.z * 2)
 
     image_ind[:] = image_ind * (input_buff.shape.y * input_buff.shape.z * 2)
 
-    in_x = ((out_x + input_buff.shape.y / 2) % output.shape.y).copy()
-    in_y = ((out_y + input_buff.shape.y / 2) % output.shape.y).copy()
+    in_x = ((out_x + input_buff.shape.y // 2) % output.shape.y).to_register()
+    in_y = ((out_y + input_buff.shape.y // 2) % output.shape.y).to_register()
 
     image_ind += in_x * 2 * input_buff.shape.z + in_y
 
@@ -43,21 +47,27 @@ def fftshift(output: vc.Buff[vc.f32], input_buff: vc.Buff[vc.f32]):
 
 @vd.shader(exec_size=lambda args: args.buff.size)
 def template_slice(buff: Buff[c64], img: Img3[f32], img_shape: Const[iv4], rotation: Var[m4]):
-    ind = vc.global_invocation().x.cast_to(i32).copy()
+    ind = vc.global_invocation_id().x.to_dtype(vd.int32).to_register()
     
     # calculate the planar position of the current buffer pixel
-    my_pos = vc.new_vec4(0, 0, 0, 1)
-    my_pos.xy[:] = vc.unravel_index(ind, buff.shape).xy
-    my_pos.xy += buff.shape.xy / 2
-    my_pos.xy[:] = vc.mod(my_pos.xy, buff.shape.xy)
-    my_pos.xy -= buff.shape.xy / 2
+    my_pos = vc.new_vec4_register(0, 0, 0, 1)
+    my_pos.swizzle("xy")[:] = vc.ravel_index(ind, buff.shape).swizzle("xy")
+
+    p2 = my_pos.swizzle("xy")
+    p2 += buff.shape.swizzle("xy") / 2
+
+    my_pos.swizzle("xy")[:] = vc.mod(my_pos.swizzle("xy"), buff.shape.swizzle("xy"))
+
+    p2 = my_pos.swizzle("xy")
+    p2 -= buff.shape.swizzle("xy") / 2
 
     # rotate the position to 3D template space
     my_pos[:] = rotation * my_pos
-    my_pos.xyz += img_shape.xyz.cast_to(v3) / 2
+    p3 = my_pos.swizzle("xyz")
+    p3 += img_shape.swizzle("xyz").cast_to(v3) / 2
     
     # sample the 3D image at the current position
-    buff[ind] = img.sample(my_pos.xyz).xy
+    buff[ind] = img.sample(my_pos.swizzle("xyz")).swizzle("xy")
 
 def make_density_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     m = np.zeros(shape=(4, 4, angles.shape[0]), dtype=np.float32)
@@ -233,3 +243,4 @@ class TemplateDensity(Template):
     
     def get_shape(self) -> tuple:
         return self.shape
+"""
