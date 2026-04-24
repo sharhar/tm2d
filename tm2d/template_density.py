@@ -1,12 +1,10 @@
-import vkdispatch as vd 
+import vkdispatch as vd
 import vkdispatch.codegen as vc
 from vkdispatch.codegen.abbreviations import *
 
 import tm2d
 
 from typing import Tuple, List
-
-import tm2d.utilities as tu
 
 from .plan import Template
 from .ctf import CTFParams, ctf_filter

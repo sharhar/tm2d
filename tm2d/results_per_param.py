@@ -18,7 +18,7 @@ class ResultsParam(Results):
         self.best_mip_values_buffer = vd.Buffer((batch_count, total_indicies, ), vd.float32)
         self.compiled = False
         self.reset()
-    
+
     def reset(self):
         self.best_values_buffer.write(
             (np.ones(shape=self.best_values_buffer.shape) * -1000000).astype(np.float32)
@@ -26,13 +26,13 @@ class ResultsParam(Results):
         self.best_mip_values_buffer.write(
             (np.ones(shape=self.best_mip_values_buffer.shape) * -1000000).astype(np.float32)
         )
-    
+
     def check_comparison(self, comparison_buffer: vd.RFFTBuffer, *indicies: vc.Var[vc.i32]):
         template_count = comparison_buffer.shape[0] // self.best_values_buffer.shape[0]
 
         assert comparison_buffer.shape[0] % self.best_values_buffer.shape[0] == 0, \
             "The comparison buffer shape must be divisible by the best values buffer shape."
-        
+
         assert len(indicies) == template_count, \
             f"The number of indicies ({len(indicies)}) must match the number of templates"
 
@@ -45,7 +45,7 @@ class ResultsParam(Results):
 
             with vc.if_block(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1):
                 result[:] = vc.max(buf[ind].real, buf[ind].imag)
-            
+
             with vc.else_block():
                 result[:] = 0.0
 
@@ -58,7 +58,7 @@ class ResultsParam(Results):
 
             with vc.if_block(ind % comparison_buffer.shape[2] < comparison_buffer.shape[2] - 1):
                 result[:] = buf[ind].real + buf[ind].imag
-            
+
             with vc.else_block():
                 result[:] = 0.0
 
@@ -75,7 +75,7 @@ class ResultsParam(Results):
                 val_real[:] = buf[ind].real
                 val_imag[:] = buf[ind].imag
                 result[:] = val_real * val_real + val_imag * val_imag
-            
+
             with vc.else_block():
                 result[:] = 0.0
 
@@ -147,7 +147,7 @@ class ResultsParam(Results):
         self.compiled_best_mip_values = np.take_along_axis(all_best_mips, gather_indices, axis=0)[0]
 
         self.compiled = True
-    
+
     def get_zscore_list(self, params: ParamSet):
         if not self.compiled:
             self.compile_results()

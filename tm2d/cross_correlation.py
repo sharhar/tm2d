@@ -1,6 +1,6 @@
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abbreviations import *
+from vkdispatch.codegen.abbreviations import Buff, f32, c64, v2, Const
 
 import numpy as np
 
@@ -19,7 +19,7 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
         out_y = ind % micrograph_shape[2]
 
         in_coords = vc.new_uvec2_register()
-        
+
         with vc.if_block(vc.any(
             vc.all(
                 out_x >= template_shape[0] // 2,
@@ -32,7 +32,7 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
         )):
             read_op.register.real = 0.0
             read_op.register.imag = 0.0
-        
+
         with vc.else_block():
             with vc.if_block(out_x < micrograph_shape[1] // 2):
                 in_coords.x = out_x
@@ -59,7 +59,7 @@ def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tu
     return crop_mapping
 
 @vd.shader(exec_size=lambda args: args.buf.size)
-def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):   
+def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):
     buf[vc.global_invocation_id().x] = val
 
 class ComparatorCrossCorrelation(Comparator):
@@ -104,7 +104,7 @@ class ComparatorCrossCorrelation(Comparator):
                 result.y = 0.0
 
             return result
-        
+
         template_sum = calc_sums(template_buffer)
 
         in_buffer_shape = (
@@ -155,7 +155,7 @@ class ComparatorCrossCorrelation(Comparator):
             kernel_map=convolution_map,
             output_map=output_map_func
         )
-        
+
         vd.fft.irfft(correlation_signal)
 
-        return correlation_signal 
+        return correlation_signal

@@ -1,6 +1,6 @@
-import vkdispatch as vd 
+import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abbreviations import *
+from vkdispatch.codegen.abbreviations import Buff, Var, Const, c64, i32, u32, f32
 
 from typing import Tuple, List
 
@@ -20,15 +20,15 @@ def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     cos_theta = np.cos(np.deg2rad(angles[:, 1]))
     sin_theta = np.sin(np.deg2rad(angles[:, 1]))
 
-    M00 = cos_phi * cos_theta 
-    M01 = -sin_phi 
+    M00 = cos_phi * cos_theta
+    M01 = -sin_phi
 
-    M10 = sin_phi * cos_theta 
-    M11 = cos_phi 
+    M10 = sin_phi * cos_theta
+    M11 = cos_phi
 
-    M20 = -sin_theta 
+    M20 = -sin_theta
 
-    cos_psi_in_plane   = np.cos(np.deg2rad(-angles[:, 2] - 90)) 
+    cos_psi_in_plane   = np.cos(np.deg2rad(-angles[:, 2] - 90))
     sin_psi_in_plane   = np.sin(np.deg2rad(-angles[:, 2] - 90))
 
     m00  = cos_psi_in_plane
@@ -39,7 +39,7 @@ def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     in_matricies[0, 0] = m00 * M00 + m10 * M01
     in_matricies[0, 1] = m00 * M10 + m10 * M11
     in_matricies[0, 2] = m00 * M20
-    
+
     in_matricies[1, 0] = m01 * M00 + m11 * M01
     in_matricies[1, 1] = m01 * M10 + m11 * M11
     in_matricies[1, 2] = m01 * M20
@@ -52,9 +52,9 @@ def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):
 
 def gaussian_filter(buffer_shape: tuple[int, int], tid: vc.ShaderVariable, pixel_size: float, A: float = 100.0):
     vc.comment("Calculate a Gaussian filter value for the given thread ID and pixel size.")
-    
+
     pix_size_sq = pixel_size * pixel_size
-    
+
     amp = A / pix_size_sq
     B0 = 8 * np.pi** 2 * (0.27**2 + pix_size_sq / 12) # [A^2] blurring B-factor with contributions from pixel size and physical PSF
     var = 2 * pix_size_sq / B0
@@ -102,7 +102,7 @@ def apply_ctf_params(ctf_params: CTFParams,
     upos_2d = vc.new_uvec2_register()
     upos_2d.x = tid % template_shape[2]
     upos_2d.y = ((tid // template_shape[2]) + template_shape[1] // 2) % template_shape[1]
-    
+
     pos_2d = upos_2d.to_dtype(vc.v2).to_register()
     pos_2d.y = pos_2d.y - template_shape[1] // 2
 
@@ -151,7 +151,7 @@ class TemplateAtomic(Template):
                       ctf_params: CTFParams,
                       template_count: int,
                       cmd_graph: vd.CommandGraph) -> vd.RFFTBuffer:
-        
+
         sigma_e = tu.get_sigmaE(ctf_params.HT)
 
         template_buffer = vd.RFFTBuffer((template_count, *self.shape))
@@ -160,7 +160,7 @@ class TemplateAtomic(Template):
 
         rotation_type: type = vc.Const[vc.m4] if isinstance(rotations, np.ndarray) else vc.Var[vc.m4]
         pixel_size_type: type = vc.Const[vd.float32] if isinstance(pixel_size, float) else vc.Var[vd.float32]
-        
+
         @vd.shader("atom_coords.shape[0]")
         def place_atoms(image: Buff[i32], atom_coords: Buff[f32], rot_matrix: rotation_type, my_pixel_size: pixel_size_type): # type: ignore
             ind = vc.global_invocation_id().x.to_register()
@@ -223,11 +223,11 @@ class TemplateAtomic(Template):
                 template_buffer,
                 pixel_size,
                 *ctf_params.get_args(cmd_graph, template_count),
-                
+
                 buffer_shape=(1, *template_buffer.shape[1:]),
                 axis=1,
                 normalize=False,
-                
+
                 kernel_num=template_buffer.shape[0],
                 kernel_map=vd.map(
                     func=lambda *args: apply_ctf_params(
@@ -241,7 +241,7 @@ class TemplateAtomic(Template):
                     ),
                     input_types=[pixel_size_type] + ctf_params.get_type_list(template_count)
                 ),
-                
+
                 output_map=vd.map(
                     func=lambda buff: vd.fft.write_op().write_to_buffer(
                         buffer=buff,
@@ -284,7 +284,7 @@ class TemplateAtomic(Template):
                 template_buffer,
                 pixel_size,
                 *ctf_params.get_args(cmd_graph, template_count),
-                
+
                 exec_size=template_buffer.shape[1] * template_buffer.shape[2]
             )
 
@@ -293,9 +293,9 @@ class TemplateAtomic(Template):
         vd.fft.irfft(template_buffer, normalize=False)
 
         return template_buffer
-    
+
     def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
         return make_atomic_template_rotation_matrix(rotations).astype(np.float32)
-    
+
     def get_shape(self) -> tuple:
         return self.shape

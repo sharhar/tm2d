@@ -113,7 +113,7 @@ class ResultsPixel(Results):
         self.compiled_cross_variance = self.compiled_sum2_cross / self.compiled_count[:, None, None] - self.compiled_cross_mean * self.compiled_cross_mean # per-pixel variance of cross-correlation
 
         self.compiled_z_score = (self.compiled_mip - self.compiled_cross_mean) / np.sqrt(self.compiled_cross_variance)
-        
+
         self.compiled_location_of_best_match = []
         self.compiled_index_of_params_match = []
 
@@ -129,7 +129,7 @@ class ResultsPixel(Results):
 
 
         self.compiled = True
-    
+
     def get_mip(self):
         if not self.compiled:
             self.compile_results()
@@ -153,25 +153,25 @@ class ResultsPixel(Results):
             self.compile_results()
 
         return self.compiled_index_of_params_match
-    
+
     def get_sum_cross(self):
         if not self.compiled:
             self.compile_results()
 
         return self.compiled_sum_cross
-    
+
     def get_sum2_cross(self):
         if not self.compiled:
             self.compile_results()
 
         return self.compiled_sum2_cross
-    
+
     def get_count(self):
         if not self.compiled:
             self.compile_results()
 
         return self.compiled_count
-    
+
     def get_z_score(self):
         if not self.compiled:
             self.compile_results()
@@ -183,13 +183,13 @@ class ResultsPixel(Results):
             self.compile_results()
 
         return self.compiled_cross_mean
-    
+
     def get_cross_variance(self):
         if not self.compiled:
             self.compile_results()
 
         return self.compiled_cross_variance
-    
+
     def check_comparison(self, comparison_buffer: vd.Buffer, *indicies: vc.Var[vc.i32]):
         assert comparison_buffer.shape[0] % self.max_cross.shape[0] == 0, "Comparison buffer size must be a multiple of the number of templates."
 
@@ -265,7 +265,7 @@ class ResultsPixel(Results):
                 description=ctx.get_description(name="update_max_func"),
                 exec_count=self.max_cross.size
             )
-        
+
         update_max_shader(
             self.max_cross,
             self.best_index,

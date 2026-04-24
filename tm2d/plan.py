@@ -2,14 +2,9 @@ import vkdispatch as vd
 import vkdispatch.codegen as vc
 import numpy as np
 import tqdm
-import numbers
-
 from typing import Union, List, Tuple, Optional
 
 from .ctf import CTFParams, CTFSet
-
-from .utilities import whiten_buffer
-
 class Template:
     def __init__(self):
         raise NotImplementedError("Template is an abstract class. Please implement it in a subclass.")
@@ -22,11 +17,11 @@ class Template:
                       cmd_graph: vd.CommandGraph = None,
                       disable_ctf: bool = False) -> vd.RFFTBuffer:
         """
-        This abstract method should return a buffer containing the sampled and filtered template in real space.   
+        This abstract method should return a buffer containing the sampled and filtered template in real space.
         """
-        
+
         raise NotImplementedError("make_template must be implemented in a subclass.")
-    
+
     def make_template(self,
                       rotations: Union[vc.Var[vc.m4], List[int], np.ndarray],
                       pixel_size: float,
@@ -34,19 +29,19 @@ class Template:
                       template_count: int = 1,
                       cmd_graph: vd.CommandGraph = None) -> vd.RFFTBuffer:
         """
-        This abstract method should return a buffer containing the sampled and filtered template in real space.   
+        This abstract method should return a buffer containing the sampled and filtered template in real space.
         """
 
         if ctf_params is None:
             ctf_params = CTFParams()
-        
+
         if isinstance(rotations, list):
             rotations = np.array(rotations, dtype=np.float32)
 
         if isinstance(rotations, np.ndarray):
             if rotations.ndim == 1:
                 rotations = rotations.reshape(1, 3)
-            
+
             if rotations.ndim == 2:
                 if rotations.shape[1] == 4 and rotations.shape[0] == 4:
                     rotations = rotations.reshape(1, 4, 4)
@@ -62,19 +57,19 @@ class Template:
             template_count=template_count,
             cmd_graph=cmd_graph
         )
-    
+
     def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
         raise NotImplementedError("get_rotation_matricies must be implemented in a subclass.")
-    
+
     def get_rotation_matricies(self, rotations: Union[np.ndarray, Tuple[float, float, float]]) -> np.ndarray:
         if not isinstance(rotations, np.ndarray):
             rotations = np.array(rotations, dtype=np.float32).reshape(1, 3)
-        
+
         if rotations.ndim == 1:
             rotations = rotations.reshape(1, 3)
 
         return self._get_rotation_matricies(rotations)
-    
+
     def get_shape(self) -> tuple:
         """
         Return the shape of the template.
@@ -85,7 +80,7 @@ class Template:
 class Comparator:
     def __init__(self):
         raise NotImplementedError("Comparator is an abstract class. Please implement it in a subclass.")
-    
+
     def set_data(self, data: np.ndarray):
         """
         This method should set the data buffer that will be used for comparison.
@@ -101,7 +96,7 @@ class Results:
 
     def check_comparison(self, comparison_buffer: vd.RFFTBuffer, *indicies: vc.Var[vc.i32]):
         raise NotImplementedError("check_comparison must be implemented in a subclass.")
-    
+
     def reset(self):
         """
         Reset the results to their initial state.
@@ -129,20 +124,20 @@ class ParamSet:
         instance.ctf_set = ctf_set
 
         return instance
-    
+
     def get_rotation_count(self) -> int:
         if self.rotations is None:
             return 1
         return self.rotations.shape[0]
-    
+
     def get_pixel_size_count(self) -> int:
         if self.pixel_sizes is None:
             return 1
         return self.pixel_sizes.shape[0]
-    
+
     def get_ctf_count(self) -> int:
         return self.ctf_set.get_length()
-    
+
     def get_total_count(self) -> int:
         return self.get_rotation_count() * self.get_pixel_size_count() * self.get_ctf_count()
 
@@ -155,12 +150,12 @@ class ParamSet:
 
         if self.pixel_sizes is not None:
             values["pixel_size"] = self.pixel_sizes[pixel_size_index]
-        
+
         if self.rotations is not None:
             values["rotation"] = self.rotations[rotation_index, :]
 
         return values
-    
+
     def _get_tensor_shape(self, micrograph_count: int) -> tuple:
         ctf_lengths = self.ctf_set.get_lengths_list()
         params_count = len(ctf_lengths) + 1
@@ -180,7 +175,7 @@ class ParamSet:
             params_count += 4
 
         return (micrograph_count, ) + shape_prefix + tuple(ctf_lengths) + (params_count,)
-        
+
     def get_values_tensor(self, mip_list: np.ndarray) -> np.ndarray:
         cropped_mip_list = mip_list[:, :self.get_total_count()]
 
@@ -216,7 +211,7 @@ class ParamSet:
             values_tensor[:, :, :, 0] = cropped_mip_list.reshape(values_tensor.shape[:-1])
             values_tensor[:, :, :, 1:4] = self.rotations.reshape(1, -1, 1, 3)
             values_tensor[:, :, :, 4:] = self.ctf_set.combinations_array
-        
+
             axis_names_dict["rotation"] = 1
         else:
             values_tensor[:, :, :, :, 0] = cropped_mip_list.reshape(values_tensor.shape[:-1])
@@ -228,8 +223,6 @@ class ParamSet:
             axis_names_dict["pixel_size"] = 2
 
         return values_tensor.reshape(tensor_shape), axis_names_dict
-
-        
 
 
 class Plan:
@@ -248,8 +241,7 @@ class Plan:
                  rotation: Optional[np.ndarray] = None,
                  pixel_size: Optional[float] = None,
                  ctf_params: Optional[CTFParams] = None,
-                 template_batch_size: int = 2,
-                 whiten_template: bool = False):
+                 template_batch_size: int = 2):
 
         self.template_batch_size = template_batch_size
 
@@ -275,9 +267,6 @@ class Plan:
             ctf_params=ctf_params
         )
 
-        if whiten_template:
-            whiten_buffer(self.template_buffer)
-
         self.comparison_buffer = self.comparator.compare_template(self.template_buffer)
 
         self.results.check_comparison(
@@ -286,7 +275,7 @@ class Plan:
         )
 
         vd.set_global_graph(prev_graph)
-    
+
     def set_data(self, data: np.ndarray):
         self.comparator.set_data(data)
 
@@ -302,7 +291,7 @@ class Plan:
         pixel_sizes_array = np.zeros(shape=(batch_size,), dtype=np.float32)
         ctf_index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
         index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
-        
+
         max_batch_size = self.template_batch_size * batch_size
         input_array = np.zeros(shape=(batch_size,), dtype=np.float32)
 
@@ -311,7 +300,7 @@ class Plan:
 
         if enable_progress_bar:
             status_bar = tqdm.tqdm(total=params.get_total_count(), dynamic_ncols=True)
-        
+
         for i in range(0, params.get_ctf_count(), max_batch_size):
 
             ctf_count = min(max_batch_size, params.get_ctf_count() - i)
@@ -373,8 +362,7 @@ class Plan:
 
                         for rot_ind in range(rotations_batch_size):
                             index_arrays[k][pixel_batch_width*rot_ind + actual_pixel_batch_size * ctf_batch_size:pixel_batch_width*(rot_ind+1)] = -params.get_total_count()
-                    
-                    #print(index_arrays)
+
                 else:
                     raise ValueError("Something went wrong.")
 
@@ -389,10 +377,10 @@ class Plan:
                         )
 
                         self.cmd_graph.set_var(
-                            "rotation_matrix", 
+                            "rotation_matrix",
                             self.template.get_rotation_matricies(rotations_array[:full_batch_size, :])
                         )
-                    
+
                     rotation_offset = params.get_ctf_count() * params.get_pixel_size_count() * rotation_index
 
                     for k in range(self.template_batch_size):
@@ -400,7 +388,7 @@ class Plan:
                             f"index{k}",
                             index_arrays[k][:full_batch_size] + rotation_offset
                         )
-                    
+
                     self.cmd_graph.submit_any(full_batch_size)
 
                     if enable_progress_bar:
@@ -408,7 +396,7 @@ class Plan:
 
         if enable_progress_bar:
             status_bar.close()
-    
+
     def make_param_set(self,
                         rotations: Optional[np.ndarray] = None,
                         pixel_sizes: Optional[np.ndarray] = None,
@@ -417,7 +405,7 @@ class Plan:
             assert self.rotation is not None, "If rotations are not provided, the rotation attribute must be set."
         else:
             assert self.rotation is None, "If rotations are provided, the rotation attribute must not be set."
-        
+
         if pixel_sizes is None:
             assert self.pixel_size is not None, "If pixel sizes are not provided, the pixel_size attribute must be set."
         else:

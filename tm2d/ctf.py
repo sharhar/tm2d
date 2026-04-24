@@ -35,13 +35,13 @@ class CTFSet:
         instance.lengths = lengths
 
         return instance
-    
+
     def get_length(self):
         return self.combinations_array.shape[0]
-    
+
     def get_lengths_list(self):
         return self.lengths
-    
+
     def set_ctf_batch(self,
                       index_arrays: list[np.ndarray],
                       input_array: np.ndarray,
@@ -56,7 +56,7 @@ class CTFSet:
             end_index = min(start_index + ctf_batch_size, self.get_length())
 
             last_index = end_index - start_index
-            
+
             for ii, field in enumerate(self.field_names):
                 input_array[:last_index] = self.combinations_array[start_index:end_index, ii]
 
@@ -72,9 +72,9 @@ class CTFSet:
         return_dict = {}
         for i, field_name in enumerate(self.field_names):
             return_dict[field_name] = self.combinations_array[index, i]
-            
+
         return return_dict
-    
+
 @dataclasses.dataclass
 class CTFParams:
     HT: float
@@ -115,7 +115,7 @@ class CTFParams:
     o_zern_4: float
     o_zern_5: float
 
-    
+
     _units = {
         'HT': ('V', 1.0), # stored in V, show in kV
         'Cs': ('A', 1.0),
@@ -179,7 +179,7 @@ class CTFParams:
                 even_zernike: list[float] = None,
                 odd_zernike: list[float] = None
                 ):
-        
+
         self.HT = HT
         self.Cs = Cs
         self.Cc = Cc
@@ -306,7 +306,7 @@ class CTFParams:
             even_zernike=even_zernike,
             odd_zernike=odd_zernike
         )
-    
+
     @classmethod
     def like_theia(cls,
                     HT: float = 300e3,
@@ -413,7 +413,7 @@ class CTFParams:
             self.e_zern_7,
             self.e_zern_8
         )
-    
+
     def get_odd_coeff(self):
         return (
             self.o_zern_0,
@@ -423,7 +423,7 @@ class CTFParams:
             self.o_zern_4,
             self.o_zern_5,
         )
-    
+
     def get_mag_matrix(self):
         return (
             (self.mag_00, self.mag_01),
@@ -449,7 +449,7 @@ class CTFParams:
                     types.append(vc.Var[vc.f32])
 
         return types
-    
+
     def get_args(self, cmd_graph: vd.CommandGraph, template_count: int):
         args = []
 
@@ -469,7 +469,7 @@ class CTFParams:
                     args.append(cmd_graph.bind_var(f"{field.name}_{batch_id}"))
 
         return args
-    
+
     def assemble_params_list_from_args(self, args_list: list[vc.Var], template_count: int) -> "list[CTFParams]":
         fields = dataclasses.fields(self)
 
@@ -487,7 +487,7 @@ class CTFParams:
             else:
                 dynamic_count += 1
                 dynamic_indicies.append(ii)
-        
+
         assert len(args_list) == static_count + dynamic_count * template_count, f"Expected {static_count} + {dynamic_count} * {template_count} args, got {len(args_list)}"
 
         dynamic_args_list = args_list[static_count:]
@@ -511,7 +511,7 @@ class CTFParams:
         values_dict_keys = set(values_dict.keys())
         if dynamic_field_names != values_dict_keys:
             raise ValueError(f"Dynamic field names {dynamic_field_names} do not match keys in values_dict {values_dict_keys}")
-        
+
         dynamic_values = [values_dict[field.name] for field in dynamic_fields]
 
         for dyn_val, field in zip(dynamic_values, dynamic_fields):
@@ -643,7 +643,7 @@ def phase_from_odd_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff:
         with vc.if_block(params.get_odd_coeff()[i] != 0.0):
             m, n = _odd_index_to_mn(i)
             psi += params.get_odd_coeff()[i] * _zernike_cart(m, n, r, th)
-        
+
     return psi # [rad]
 
 def ctf_filter(
@@ -655,7 +655,7 @@ def ctf_filter(
     vc.comment("Calculating CTF")
     gamma_lorentz = 1 + params.HT/E_MASS
     beta = vc.sqrt(1 - 1/(gamma_lorentz*gamma_lorentz))
-    
+
     epsilon = gamma_lorentz/(1 + params.HT/(2*E_MASS))
 
     temp1 = epsilon*params.energy_spread_fwhm/( params.HT * (2 * np.sqrt(2 * np.log(2))) )
@@ -664,7 +664,7 @@ def ctf_filter(
     wlen = E_COMPTON / (gamma_lorentz * beta) # wavelength in Angstroms
 
     sigma_f = params.Cc*vc.sqrt(temp1*temp1 + temp2*temp2 + 4*params.OL_current_std*params.OL_current_std)
-    
+
     Cs = params.Cs # [A]
     sigma_beta = params.beam_semiangle # [rad]
     johnson_std = params.johnson_std # [A]
@@ -674,7 +674,7 @@ def ctf_filter(
     NA = params.NA # [dimensionless]
     f_OL = params.f_OL # [A]
     lpp_rot = params.lpp_rot # [deg]
-    
+
     lpp_rot_rad = np.pi / 180 * lpp_rot # [rad]
     A2_mag = params.A_mag # [A]
     A2_ang = params.A_ang # [deg]
@@ -695,7 +695,7 @@ def ctf_filter(
 
     Sr_2 = (Sx*Sx + Sy*Sy).to_register()
     Sa = (vc.atan2(Sy, Sx) + np.pi/2).to_register()
-    
+
     wlen_2 = wlen*wlen
 
     CWS = Cs*wlen_2*Sr_2.to_register()
@@ -734,7 +734,7 @@ def ctf_filter(
     with vc.if_block(vc.all(Sx == 0.0, Sy == 0.0)):
         CTF.real = 0.0
         CTF.imag = 0.0
-    
+
     return CTF
 
 def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel_size: float):
@@ -768,7 +768,7 @@ def apply_ctf_to_rfft_buffer(buffer: vd.RFFTBuffer, ctf_params: CTFParams, pixel
             description=ctx.get_description("apply_ctf_to_rfft_buffer"),
             exec_count=buffer.size
         )
-         
+
 
     ctf_apply_shader(buffer, *ctf_params.get_args(None, 1))
 
@@ -776,20 +776,20 @@ def rfft2_to_fft2(rfft_result, original_shape):
     rows, cols = original_shape
     full_fft = np.zeros((rows, cols), dtype=complex)
     full_fft[:, :rfft_result.shape[1]] = rfft_result
-    
+
     if cols % 2 == 0:
         for k in range(1, rfft_result.shape[1] - 1):
             full_fft[:, cols - k] = np.conj(np.roll(rfft_result[:, k], 0, axis=0)[::-1])
     else:
         for k in range(1, rfft_result.shape[1]):
             full_fft[:, cols - k] = np.conj(np.roll(rfft_result[:, k], 0, axis=0)[::-1])
-    
+
     for j in range(1, cols):
         if j < rfft_result.shape[1]:
             continue
         full_fft[1:, j] = np.conj(full_fft[1:, cols - j][::-1])
         full_fft[0, j] = np.conj(full_fft[0, cols - j])
-    
+
     return full_fft
 
 def generate_ctf(box_size: tuple[int, int], pixel_size: float, ctf_params: CTFParams = None) -> np.ndarray:
