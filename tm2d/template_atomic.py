@@ -2,10 +2,7 @@ import vkdispatch as vd
 import vkdispatch.codegen as vc
 from vkdispatch.codegen.abbreviations import Buff, Var, Const, c64, i32, u32, f32
 
-from typing import Tuple, List
-
-import tm2d
-import tm2d.utilities as tu
+from typing import Tuple
 
 import numpy as np
 
@@ -117,6 +114,37 @@ def apply_ctf_params(ctf_params: CTFParams,
 
     value[:] = vc.mult_complex(value, ctf)
 
+e_mass = 0.511e6 # electron mass [eV/c^2]
+e_compton = 2.42631023867e-2 # compton wavelength [A]
+e_charge_SI = 1.602176634e-19 # elementary charge [C]
+J_per_eV = 1.602176634e-19 # joules per electron volt (unit conversion)
+
+def get_gammaLorentz(HT):
+    """
+    Calculates Lorentz factor [dimensionless] from HT [V].
+    Units: [dimensionless]
+    """
+    # note electron mass is in [V]
+    return 1 + HT / e_mass # [dimensionless]
+
+def get_beta(HT):
+    """
+    Calculates electron speed [units of speed of light] from HT [V].
+    """
+    gamma_lorentz = get_gammaLorentz(HT) # Lorentz factor [dimensionless]
+    return np.sqrt(1 - 1 / gamma_lorentz**2) # [units of c]
+
+def get_sigmaE(HT):
+    """
+    Calculates interaction parameter for scaling between projected potential and phase.
+    Units: [rad/(V*A)]
+    """
+    gamma_lorentz = get_gammaLorentz(HT) # Lorentz factor
+    beta = get_beta(HT) # electron speed relative to c [dimensionless]
+    wlen = e_compton / (gamma_lorentz * beta) # wavelength [A]
+    return 2*np.pi / (wlen * HT) * ((e_mass * J_per_eV) + e_charge_SI * HT) /\
+        (2 * e_mass * J_per_eV + e_charge_SI*HT) # [rad/(V*A)]
+
 class TemplateAtomic(Template):
     shape: Tuple[int, int]
     atomic_coords: np.ndarray
@@ -152,7 +180,7 @@ class TemplateAtomic(Template):
                       template_count: int,
                       cmd_graph: vd.CommandGraph) -> vd.RFFTBuffer:
 
-        sigma_e = tu.get_sigmaE(ctf_params.HT)
+        sigma_e = get_sigmaE(ctf_params.HT)
 
         template_buffer = vd.RFFTBuffer((template_count, *self.shape))
 

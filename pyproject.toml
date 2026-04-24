@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tm2d"
-version = "0.1.7"
+version = "0.2.0"
 authors = [
   { name="Shahar Sandhaus", email="shahar.sandhaus@berkeley.edu" },
 ]
@@ -29,9 +29,7 @@ Issues = "https://github.com/sharhar/tm2d/issues"
 
 [tool.setuptools]
 packages = [
-    "tm2d",
-    "tm2d.utilities",
-    "tm2d.simulators",
+    "tm2d"
 ]
 
 [project.optional-dependencies]

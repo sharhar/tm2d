@@ -1,10 +1,9 @@
-import vkdispatch as vd
 import tm2d
 import numpy as np
 
 import sys
 
-import tm2d.utilities as tu
+import tm2d_utils as tu
 
 from matplotlib import pyplot as plt
 
@@ -18,7 +17,7 @@ def save_arr_as_png(arr: np.ndarray, title: str, filename: str):
 #vd.initialize(debug_mode=True)
 #vd.make_context(multi_device=True, multi_queue=True)
 
-small_region = tm2d.OrientationRegion(
+small_region = tu.OrientationRegion(
         # symmetry="C1", # This is the default, so we can omit it
         phi_min=170,
         phi_max=200,
@@ -59,13 +58,12 @@ plan = tm2d.Plan(
         B = None,
         Cs = 2.7e7
     ),
-    whiten_template=False,
     template_batch_size=4,
 )
 
 plan.set_data(data_array)
 
-rotations = tm2d.get_orientations_cube(
+rotations = tu.get_orientations_cube(
     angular_step_size=2,
     psi_step_size=1,
     region=small_region
@@ -80,22 +78,24 @@ params = plan.make_param_set(
 
 plan.run(params, enable_progress_bar=True)
 
-for i in range(results.count):
+for i in range(results.micrograph_count):
     np.save(f"{output_dir}/template{i}.npy", plan.template_buffer.read_real(0)[i])
     np.save(f"{output_dir}/comparison{i}.npy", plan.comparison_buffer.read_real(0)[i])
 
     np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
-    np.save(f"{output_dir}/Z_score{i}.npy", results.get_z_score()[i])
 
-    match_index = results.get_index_of_params_match()[i]
-    match_location = results.get_location_of_best_match()[i]
+    z_score = tu.get_pixel_z_scores(results)[i]
+
+    np.save(f"{output_dir}/Z_score{i}.npy", z_score)
+
+    match_locations, match_indicies = tu.get_locations_and_indicies_of_best_match(results)
 
     best_indicies = results.get_best_index_array()[i]
 
     print(f"Micrograph {i}:")
-    print(f"\tMax cross-correlation: {results.get_mip()[i][match_location]}")
+    print(f"\tMax cross-correlation: {results.get_mip()[i][match_locations[i]]}")
 
-    for param_name, param_value in params.get_values_at_index(match_index).items():
+    for param_name, param_value in params.get_values_at_index(match_indicies[i]).items():
         print(f"\tBest {param_name}: {param_value}")
 
     for param_name, param_values in params.get_values_at_index(best_indicies).items():

@@ -104,6 +104,13 @@ class Results:
         """
         raise NotImplementedError("reset must be implemented in a subclass.")
 
+    def compile_results(self, templates_count: int):
+        """
+        Compile the results after all comparisons have been made.
+        This method should be implemented in subclasses to compile the results into a final form that can be easily accessed.
+        """
+        raise NotImplementedError("compile_results must be implemented in a subclass.")
+
 class ParamSet:
     rotations: Optional[np.ndarray] = None
     pixel_sizes: Optional[np.ndarray] = None
@@ -302,7 +309,6 @@ class Plan:
             status_bar = tqdm.tqdm(total=params.get_total_count(), dynamic_ncols=True)
 
         for i in range(0, params.get_ctf_count(), max_batch_size):
-
             ctf_count = min(max_batch_size, params.get_ctf_count() - i)
             ctf_batch_size = int(np.ceil(ctf_count / self.template_batch_size))
             rotations_pixels_batch_size = int(np.floor(batch_size / ctf_batch_size))
@@ -393,6 +399,8 @@ class Plan:
 
                     if enable_progress_bar:
                         status_bar.update(ctf_count * actual_rotation_batch_size)
+
+        self.results.compile_results(params.get_total_count())
 
         if enable_progress_bar:
             status_bar.close()

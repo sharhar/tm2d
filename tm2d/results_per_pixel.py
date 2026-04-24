@@ -1,6 +1,5 @@
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abbreviations import *
 
 import numpy as np
 
@@ -9,7 +8,7 @@ from .plan import Results
 # To avoid errors from the limited precision of floating point numbers, we use 2 32-bit floats
 # to approximate a higher precision accumulator.
 # Algorithm modified from this paper: https://link.springer.com/article/10.1007/pl00009321
-def double_precision_add_f32(dsa: Const[v2], dsb: Const[f32]) -> v2:
+def double_precision_add_f32(dsa: vc.Const[vc.v2], dsb: vc.Const[vc.f32]) -> vc.v2:
     t2 = (dsa.y + dsb).to_register()
     dsc_x = (dsa.x + t2).to_register()
 
@@ -26,52 +25,68 @@ def double_precision_add_vec2(dsa: vc.Const[vc.v2], dsb: vc.Const[vc.v2]) -> vc.
     return vc.new_vec2_register(dsc_x, t2 - (dsc_x - t1))
 
 
+def accumulate(
+        template_count: int,
+        cross_correlation: vc.Buff[vc.f32],
+        cross_corr_index: vc.Var[vc.i32],
+        micrograph_span_rfft: int,
+        *index_values: vc.Var[vc.i32]):
+
+    mip = vc.new_float_register(0, var_name="mip")
+
+    sum_cross = vc.new_vec2_register(0, var_name="sum_cross")
+    sum2_cross = vc.new_vec2_register(0, var_name="sum2_cross")
+
+    best_mip = vc.new_float_register(vc.ninf_f32(), var_name="best_mip")
+    best_index = vc.new_int_register(-1, var_name="best_index")
+
+    for i in range(template_count):
+        if i != 0:
+            cross_corr_index[:] = cross_corr_index + micrograph_span_rfft
+
+        with vc.if_block(index_values[i] >= 0):
+            mip[:] = cross_correlation[cross_corr_index]
+
+            sum_cross[:] = double_precision_add_f32(sum_cross, mip)
+            sum2_cross[:] = double_precision_add_f32(sum2_cross, mip * mip)
+
+            with vc.if_block(mip > best_mip):
+                best_mip[:] = mip
+                best_index[:] = index_values[i]
+
+    return best_mip, best_index, sum_cross, sum2_cross
+
+
 class ResultsPixel(Results):
     max_cross: vd.Buffer
     best_index: vd.Buffer
     sum_cross: vd.Buffer # running mean
     sum2_cross: vd.Buffer # running variance
-    count_buffer: vd.Buffer # counter
 
-    count: int
+    micrograph_count: int
 
     compiled: bool
 
     compiled_mip: np.ndarray
     compiled_best_index_array: np.ndarray
-    compiled_location_of_best_match: list[tuple[int, int]]
-    compiled_index_of_params_match: list[int]
     compiled_sum_cross: np.ndarray
     compiled_sum2_cross: np.ndarray
-    compiled_count: np.ndarray
-    compiled_z_score: np.ndarray
-    compiled_cross_mean: np.ndarray
-    compiled_cross_variance: np.ndarray
+
+    templates_count: int
 
     def __init__(self, shape: tuple) -> None:
-
         assert len(shape) == 3, "Shape must be a 3D tuple (L, H, W)."
 
-        count = int(shape[0])
+        micrograph_count = int(shape[0])
         width = int(shape[1])
         height = int(shape[2])
 
-        self.count = count
+        self.micrograph_count = micrograph_count
 
-        self.max_cross = vd.Buffer((count, width, height), vd.float32)
-        self.best_index = vd.Buffer((count, width, height), vd.int32)
-        self.sum_cross = vd.Buffer((count, width, height), vd.vec2)
-        self.sum2_cross = vd.Buffer((count, width, height), vd.vec2)
-        self.count_buffer = vd.Buffer((count, ), vd.int32)
-        self.compiled = False
-        self.compiled_mip = None
-        self.compiled_best_index_array = None
-        self.compiled_location_of_best_match = None
-        self.compiled_index_of_params_match = None
-        self.compiled_sum_cross = None
-        self.compiled_sum2_cross = None
-        self.compiled_count = None
-        self.compiled_z_score = None
+        self.max_cross = vd.Buffer((micrograph_count, width, height), vd.float32)
+        self.best_index = vd.Buffer((micrograph_count, width, height), vd.int32)
+        self.sum_cross = vd.Buffer((micrograph_count, width, height), vd.vec2)
+        self.sum2_cross = vd.Buffer((micrograph_count, width, height), vd.vec2)
 
         self.reset()
 
@@ -80,16 +95,19 @@ class ResultsPixel(Results):
         self.best_index.write((np.ones(shape=self.best_index.shape, dtype=np.int32) * -1).astype(np.int32))
         self.sum_cross.write(np.zeros(shape=(*self.sum_cross.shape, 2), dtype=np.float32))
         self.sum2_cross.write(np.zeros(shape=(*self.sum2_cross.shape, 2), dtype=np.float32))
-        self.count_buffer.write(np.zeros(shape=self.count_buffer.shape, dtype=np.int32))
 
         self.compiled = False
+        self.compiled_mip = None
+        self.compiled_best_index_array = None
+        self.compiled_sum_cross = None
+        self.compiled_sum2_cross = None
+        self.templates_count = None
 
-    def compile_results(self, optimize_by='mip'):
+    def compile_results(self, templates_count: int):
         max_crosses = self.max_cross.read()
         best_indicies = self.best_index.read()
         sum_crosses = self.sum_cross.read()
         sum2_crosses = self.sum2_cross.read()
-        counts = self.count_buffer.read()
 
         final_results = [np.zeros(shape=(self.max_cross.shape[0], self.max_cross.shape[1], self.max_cross.shape[2], 2), dtype=np.float64) for _ in max_crosses]
 
@@ -107,88 +125,30 @@ class ResultsPixel(Results):
 
         self.compiled_sum_cross = np.fft.ifftshift(np.array(sum_crosses, dtype=np.float64).sum(axis=(0, 4)), axes=(1, 2))
         self.compiled_sum2_cross = np.fft.ifftshift(np.array(sum2_crosses, dtype=np.float64).sum(axis=(0, 4)), axes=(1, 2))
-        self.compiled_count = np.array(counts).sum(axis=0)
 
-        self.compiled_cross_mean = self.compiled_sum_cross / self.compiled_count[:, None, None] # per-pixel mean of cross-correlation
-        self.compiled_cross_variance = self.compiled_sum2_cross / self.compiled_count[:, None, None] - self.compiled_cross_mean * self.compiled_cross_mean # per-pixel variance of cross-correlation
-
-        self.compiled_z_score = (self.compiled_mip - self.compiled_cross_mean) / np.sqrt(self.compiled_cross_variance)
-
-        self.compiled_location_of_best_match = []
-        self.compiled_index_of_params_match = []
-
-        for i in range(self.count):
-            if optimize_by == 'mip':
-                self.compiled_location_of_best_match.append(np.unravel_index(np.argmax(self.compiled_mip[i]), self.compiled_mip.shape[1:]))
-                self.compiled_index_of_params_match.append(self.compiled_best_index_array[i][self.compiled_location_of_best_match[i]])
-            elif optimize_by == 'z_score':
-                self.compiled_location_of_best_match.append(np.unravel_index(np.argmax(self.compiled_z_score[i]), self.compiled_z_score.shape[1:]))
-                self.compiled_index_of_params_match.append(self.compiled_best_index_array[i][self.compiled_location_of_best_match[i]])
-            else:
-                raise ValueError("Invalid optimize_by value. Must be 'mip' or 'z_score'.")
-
+        self.templates_count = templates_count
 
         self.compiled = True
 
     def get_mip(self):
-        if not self.compiled:
-            self.compile_results()
-
+        assert self.compiled, "Results must be compiled before accessing the MIP."
         return self.compiled_mip
 
     def get_best_index_array(self):
-        if not self.compiled:
-            self.compile_results()
-
+        assert self.compiled, "Results must be compiled before accessing the best index array."
         return self.compiled_best_index_array
 
-    def get_location_of_best_match(self):
-        if not self.compiled:
-            self.compile_results()
-
-        return self.compiled_location_of_best_match
-
-    def get_index_of_params_match(self):
-        if not self.compiled:
-            self.compile_results()
-
-        return self.compiled_index_of_params_match
-
     def get_sum_cross(self):
-        if not self.compiled:
-            self.compile_results()
-
+        assert self.compiled, "Results must be compiled before accessing the sum of cross-correlations."
         return self.compiled_sum_cross
 
     def get_sum2_cross(self):
-        if not self.compiled:
-            self.compile_results()
-
+        assert self.compiled, "Results must be compiled before accessing the sum of squared cross-correlations."
         return self.compiled_sum2_cross
 
-    def get_count(self):
-        if not self.compiled:
-            self.compile_results()
-
-        return self.compiled_count
-
-    def get_z_score(self):
-        if not self.compiled:
-            self.compile_results()
-
-        return self.compiled_z_score
-
-    def get_cross_mean(self):
-        if not self.compiled:
-            self.compile_results()
-
-        return self.compiled_cross_mean
-
-    def get_cross_variance(self):
-        if not self.compiled:
-            self.compile_results()
-
-        return self.compiled_cross_variance
+    def get_templates_count(self):
+        assert self.compiled, "Results must be compiled before accessing the templates count."
+        return self.templates_count
 
     def check_comparison(self, comparison_buffer: vd.Buffer, *indicies: vc.Var[vc.i32]):
         assert comparison_buffer.shape[0] % self.max_cross.shape[0] == 0, "Comparison buffer size must be a multiple of the number of templates."
@@ -196,82 +156,52 @@ class ResultsPixel(Results):
         template_count = comparison_buffer.shape[0] // self.max_cross.shape[0]
         template_offset = self.max_cross.shape[1] * (self.max_cross.shape[2] + 2) * template_count
 
-        def update_max_func(max_cross: Buff[f32],
-                       best_index: Buff[i32],
-                       sum_cross: Buff[v2],
-                       sum2_cross: Buff[v2],
-                       count: Buff[i32],
-                       back_buffer: Buff[f32],
-                       *index_values: Var[i32]):
+        @vd.shader(
+                exec_size=self.max_cross.size,
+                arg_type_annotations=[
+                    vc.Buff[vc.f32],  # max_cross
+                    vc.Buff[vc.i32],  # best_index
+                    vc.Buff[vc.v2],   # sum_cross
+                    vc.Buff[vc.v2],   # sum2_cross
+                    vc.Buff[vc.f32],  # cross_correlation
+                ] + [vc.Var[vc.i32]] * len(indicies))
+        def update_max(max_cross: vc.Buff[vc.f32],
+                       best_index: vc.Buff[vc.i32],
+                       sum_cross: vc.Buff[vc.v2],
+                       sum2_cross: vc.Buff[vc.v2],
+                       cross_correlation: vc.Buff[vc.f32],
+                       *index_values: vc.Var[vc.i32]):
             ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
 
-            micrograph_index = (ind // (self.max_cross.shape[1] * self.max_cross.shape[2])).to_register()
-            micrograph_inner_index = (ind % (self.max_cross.shape[1] * self.max_cross.shape[2])).to_register()
+            micrograph_span = self.max_cross.shape[1] * self.max_cross.shape[2]
+            micrograph_span_rfft = self.max_cross.shape[1] * (self.max_cross.shape[2] + 2)
 
-            back_buffer_offset = (micrograph_inner_index + 2 * (micrograph_inner_index // (self.max_cross.shape[2]))).to_register()
-            back_buffer_offset[:] = back_buffer_offset + micrograph_index * template_offset
+            micrograph_index = (ind // micrograph_span).to_register()
+            micrograph_inner_index = (ind % micrograph_span).to_register()
 
-            mip_register = vc.new_float_register(0, var_name="mip_register")
+            cross_corr_index = (micrograph_inner_index + 2 * (micrograph_inner_index // (self.max_cross.shape[2]))).to_register()
+            cross_corr_index[:] = cross_corr_index + micrograph_index * template_offset
 
-            sum_cross_register = vc.new_vec2_register(0, var_name="sum_cross_register")
-            sum2_cross_register = vc.new_vec2_register(0, var_name="sum2_cross_register")
-
-            count_register = vc.new_int_register(0, var_name="count_register")
-
-            best_mip_register = vc.new_float_register(vc.ninf_f32(), var_name="best_mip_register")
-            best_index_register = vc.new_int_register(-1, var_name="best_index_register")
-
-            for i in range(template_count):
-                if i != 0:
-                    back_buffer_offset[:] = back_buffer_offset + self.max_cross.shape[1] * (self.max_cross.shape[2] + 2)
-
-                with vc.if_block(index_values[i] >= 0):
-                    mip_register[:] = back_buffer[back_buffer_offset]
-
-                    sum_cross_register[:] = double_precision_add_f32(sum_cross_register, mip_register)
-                    sum2_cross_register[:] = double_precision_add_f32(sum2_cross_register, mip_register * mip_register)
-
-                    with vc.if_block(micrograph_inner_index == 0):
-                        count_register[:] = count_register + 1
-
-                    with vc.if_block(mip_register > best_mip_register):
-                        best_mip_register[:] = mip_register
-                        best_index_register[:] = index_values[i]
-
-
-            with vc.if_block(micrograph_inner_index == 0):
-                count[micrograph_index] += count_register
-
-            sum_cross[ind] = double_precision_add_vec2(sum_cross[ind], sum_cross_register)
-            sum2_cross[ind] = double_precision_add_vec2(sum2_cross[ind], sum2_cross_register)
-
-            with vc.if_block(best_mip_register > max_cross[ind]):
-                max_cross[ind] = best_mip_register
-                best_index[ind] = best_index_register
-
-        with vc.shader_context() as ctx:
-            input_args = ctx.declare_input_arguments([
-                Buff[f32],  # max_cross
-                Buff[i32],  # best_index
-                Buff[v2],   # sum_cross
-                Buff[v2],   # sum2_cross
-                Buff[i32],  # count
-                Buff[f32],  # back_buffer
-            ] + [Var[i32]] * len(indicies))
-
-            update_max_func(*input_args)
-
-            update_max_shader = vd.make_shader_function(
-                description=ctx.get_description(name="update_max_func"),
-                exec_count=self.max_cross.size
+            best_mip_val, best_index_val, sum_cross_val, sum2_cross_val = accumulate(
+                template_count,
+                cross_correlation,
+                cross_corr_index,
+                micrograph_span_rfft,
+                *index_values
             )
 
-        update_max_shader(
+            sum_cross[ind] = double_precision_add_vec2(sum_cross[ind], sum_cross_val)
+            sum2_cross[ind] = double_precision_add_vec2(sum2_cross[ind], sum2_cross_val)
+
+            with vc.if_block(best_mip_val > max_cross[ind]):
+                max_cross[ind] = best_mip_val
+                best_index[ind] = best_index_val
+
+        update_max(
             self.max_cross,
             self.best_index,
             self.sum_cross,
             self.sum2_cross,
-            self.count_buffer,
             comparison_buffer,
             *indicies
         )

@@ -1,6 +1,5 @@
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abbreviations import *
 
 import numpy as np
 
@@ -39,7 +38,7 @@ class ResultsParam(Results):
         pixel_count = comparison_buffer.shape[1] * (comparison_buffer.shape[2] - 1) * 2
 
         @vd.reduce.map_reduce(vd.reduce.SubgroupMax, axes=[1, 2])
-        def find_best_mip(buf: Buff[c64]) -> f32:
+        def find_best_mip(buf: vc.Buff[vc.c64]) -> vc.f32:
             ind = vd.reduce.mapped_io_index()
             result = vc.new_float_register(0)
 
@@ -52,7 +51,7 @@ class ResultsParam(Results):
             return result
 
         @vd.reduce.map_reduce(vd.reduce.SubgroupAdd, axes=[1, 2])
-        def find_sum(buf: Buff[c64]) -> f32:
+        def find_sum(buf: vc.Buff[vc.c64]) -> vc.f32:
             ind = vd.reduce.mapped_io_index()
             result = vc.new_float_register(0)
 
@@ -65,7 +64,7 @@ class ResultsParam(Results):
             return result
 
         @vd.reduce.map_reduce(vd.reduce.SubgroupAdd, axes=[1, 2])
-        def find_sum2(buf: Buff[c64]) -> f32:
+        def find_sum2(buf: vc.Buff[vc.c64]) -> vc.f32:
             ind = vd.reduce.mapped_io_index()
             result = vc.new_float_register(0)
             val_real = vc.new_float_register(0)
@@ -82,12 +81,12 @@ class ResultsParam(Results):
             return result
 
         def update_best_value_func(
-            zscore_buff: Buff[f32],
-            mip_buff: Buff[f32],
-            maxes_buff: Buff[f32],
-            sums_buff: Buff[f32],
-            sum2s_buff: Buff[f32],
-            *indicies: Var[i32]):
+            zscore_buff: vc.Buff[vc.f32],
+            mip_buff: vc.Buff[vc.f32],
+            maxes_buff: vc.Buff[vc.f32],
+            sums_buff: vc.Buff[vc.f32],
+            sum2s_buff: vc.Buff[vc.f32],
+            *indicies: vc.Var[vc.i32]):
             ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
 
             for i in range(template_count):
@@ -101,16 +100,16 @@ class ResultsParam(Results):
 
                     with vc.if_block(z_score > zscore_buff[output_index]):
                         zscore_buff[output_index] = z_score
-                        mip_buff[output_index] = maxes_buff[input_index]\
+                        mip_buff[output_index] = maxes_buff[input_index]
 
         with vc.shader_context() as ctx:
             input_args = ctx.declare_input_arguments([
-                Buff[f32],  # zscore_buff
-                Buff[f32],  # mip_buff
-                Buff[f32],  # maxes_buff
-                Buff[f32],  # sums_buff
-                Buff[f32],  # sum2s_buff
-            ] + [Var[i32]] * len(indicies))
+                vc.Buff[vc.f32],  # zscore_buff
+                vc.Buff[vc.f32],  # mip_buff
+                vc.Buff[vc.f32],  # maxes_buff
+                vc.Buff[vc.f32],  # sums_buff
+                vc.Buff[vc.f32],  # sum2s_buff
+            ] + [vc.Var[vc.i32]] * len(indicies))
 
             update_best_value_func(*input_args)
 
