@@ -7,61 +7,38 @@ import tm2d_utils as tu
 
 from matplotlib import pyplot as plt
 
-def save_arr_as_png(arr: np.ndarray, title: str, filename: str):
-    plt.clf()
-    plt.imshow(arr)
-    plt.title(title)
-    plt.colorbar()
-    plt.savefig(filename)
-
-#vd.initialize(debug_mode=True)
-#vd.make_context(multi_device=True, multi_queue=True)
-
-small_region = tu.OrientationRegion(
-        # symmetry="C1", # This is the default, so we can omit it
-        phi_min=170,
-        phi_max=200,
-        theta_min=70,
-        theta_max=90,
-        psi_min=300,
-        psi_max=330
-    )
-
-rotations = tu.get_orientations_cube(
-    angular_step_size=2,
-    psi_step_size=1,
-    region=small_region
-)
-
 ctf_params = tm2d.CTFParams.like_krios(
-    defocus = None,
+    defocus = 12890,
     B = None,
     Cs = 2.7e7
 )
 
+pixel_sizes = np.arange(1.04, 1.08, 0.00004)
+B_factors = np.arange(0, 250, 0.25)
+
 params = tm2d.ParamSet.from_params(
-    rotations=rotations,
-    pixel_sizes=np.arange(1.056, 1.059, 0.002),
+    rotations=np.array([[188.84183,  78.82107, 326]]),
+    pixel_sizes=pixel_sizes,
     ctf_set=ctf_params.make_ctf_set(
-        defocus = np.arange(12870, 12900, 2),
-        B = np.arange(4, 10, 2)
+        B = B_factors
     )
 )
 
 # A copy of the data folder can be found at:
 # /BigData/Workspaces/shahar/data
 
-output_dir = sys.argv[1]
+template_type = sys.argv[1]
 
-template_atomic = tm2d.TemplateAtomic(
-    (512, 512),
-    #(576, 576),
-    tu.load_coords_from_npz("data/parsed_5lks_LSU.npz"),
-    # fuse_ctf_convolution=True,
-)
-
-# density = tu.load_density_from_mrc("data/parsed_5lks_LSU_sim_120.mrc")
-# template_atomic = tm2d.TemplateDensity(density.density, density.pixel_size)
+if template_type == "atomic":
+    template_obj = tm2d.TemplateAtomic(
+        (576, 576),
+        tu.load_coords_from_npz("data/parsed_5lks_LSU.npz"),
+    )
+elif template_type == "density":
+    density = tu.load_density_from_mrc("data/parsed_5lks_LSU_sim_120.mrc")
+    template_obj = tm2d.TemplateDensity(density.density, density.pixel_size)
+else:
+    raise ValueError(f"Unknown template type: {template_type}")
 
 data_array = np.array(
     [
@@ -71,14 +48,14 @@ data_array = np.array(
 
 comparator = tm2d.ComparatorCrossCorrelation(
     data_array.shape,
-    template_atomic.get_shape()
+    template_obj.get_shape()
 )
 
 #results = tm2d.ResultsPixel(data_array.shape)
 results = tm2d.ResultsParam(data_array.shape[0], params.get_total_count())
 
 plan = tm2d.Plan(
-    template_atomic,
+    template_obj,
     comparator,
     results,
     ctf_params=ctf_params,
@@ -90,6 +67,43 @@ plan.set_data(data_array)
 plan.run(params, enable_progress_bar=True)
 
 zscore_list = results.get_zscore_list(params)
+mip_list = results.get_mip_list(params)
+
+plt.imshow(
+    zscore_list[0][0],
+    extent=[
+        min(B_factors), max(B_factors),
+        min(pixel_sizes), max(pixel_sizes)
+    ],
+    aspect="auto",
+    origin="lower"
+)
+plt.colorbar()
+plt.title(f"Z-scores {template_type}")
+plt.xlabel("B Factor")
+plt.ylabel("Pixel Size")
+plt.savefig(f"zscore_{template_type}.png")
+plt.show()
+np.save(f"zscore_{template_type}.npy", zscore_list[0][0])
+
+plt.imshow(
+    mip_list[0][0],
+    extent=[
+        min(B_factors), max(B_factors),
+        min(pixel_sizes), max(pixel_sizes)
+    ],
+    aspect="auto",
+    origin="lower"
+)
+plt.colorbar()
+plt.title(f"MIPs {template_type}")
+plt.xlabel("B Factor")
+plt.ylabel("Pixel Size")
+plt.savefig(f"mip_{template_type}.png")
+plt.show()
+np.save(f"mip_{template_type}.npy", mip_list[0][0])
+
+print(mip_list.shape)
 
 best_index = np.argmax(zscore_list)
 values = params.get_values_at_index(best_index)
@@ -97,6 +111,9 @@ values = params.get_values_at_index(best_index)
 print(values)
 
 values = params.get_values_tensor(zscore_list)
+
+print(values[0].shape)
+print(values[1])
 
 print(params.get_tensor_axes_names())
 
