@@ -1,9 +1,7 @@
 import vkdispatch as vd
 import vkdispatch.codegen as vc
 
-import tm2d
-
-from typing import Tuple, List
+from typing import Tuple
 
 from .plan import Template
 from .ctf import CTFParams, ctf_filter
@@ -97,38 +95,121 @@ def make_density_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
 
     return m.T
 
-def make_density_template(
-        rotation_matrix: np.ndarray,
-        density_array: np.ndarray,
-        transformed: bool = False) -> vd.Buffer:
-    assert density_array.ndim == 3, "Density array must be 3D"
-    assert density_array.shape[0] == density_array.shape[1] and density_array.shape[0] == density_array.shape[2], "Density array must be cubic"
+def extract_fft_slices(
+    template_buffer: vd.RFFTBuffer,
+    sampler: vd.Sampler,
+    image_size: int,
+    rotations: np.ndarray,
+    pixel_size: float,
+    base_pixel_size: float,
+    ctf_params: CTFParams,
+    disable_ctf: bool,
+    cmd_graph: vd.CommandGraph
+):
 
-    if not transformed:
-        density_array = np.fft.fftshift(np.fft.fftn(np.fft.fftshift(density_array))).astype(np.complex64)
+    rotation_type: type = vc.Const[vc.m4] if isinstance(rotations, np.ndarray) else vc.Var[vc.m4]
+    pixel_size_type: type = vc.Const[vd.float32] if isinstance(pixel_size, float) else vc.Var[vd.float32]
 
-    image = vd.Image3D(density_array.shape, vd.float32, 2)
-    image.write(density_array)
+    @vd.shader(
+        exec_size=template_buffer.shape[1] * template_buffer.shape[2],
+        arg_type_annotations= [
+            vc.Buff[vc.c64], # output buffer
+            vc.Img3[vc.f32], # input image
+            vc.Const[vc.i32], # input image dim
+            rotation_type, # rotation matrix
+            pixel_size_type, # pixel size
+            *ctf_params.get_type_list(template_buffer.shape[0]) # ctf params
+        ]
+    )
+    def extract_fft_slices_shader(
+        buff: vc.Buff[vc.c64],
+        img: vc.Img3[vc.f32],
+        img_dim: vc.Const[vc.i32],
+        rotation,
+        pix_size,
+        *in_args):
 
-    signal = tm2d.Signal2D(density_array.shape[0], density_array.shape[0], True, False)
+        ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
 
-    template_slice(signal.buffer(), image, (*image.shape, 0), rotation_matrix)
+        # calculate the planar position of the current buffer pixel
+        ipos = vc.new_ivec4_register(0, 0, 0, 1)
+        ipos.x = ind % template_buffer.shape[2]
+        ipos.y = ind // template_buffer.shape[2]
 
-    return signal
+        ipos.y += img_dim // 2
+        ipos.y[:] = vc.mod(ipos.y, img_dim).to_dtype(vc.i32)
+        ipos.y -= img_dim // 2
+
+        my_pos = ipos.to_dtype(vc.v4).to_register()
+
+        # rotate the position to 3D template space
+        my_pos[:] = rotation * my_pos * (base_pixel_size / pix_size)
+
+        with vc.if_block(vc.any(
+            my_pos.x < -template_buffer.shape[1],
+            my_pos.x > (template_buffer.shape[1] - 1),
+            my_pos.y < -template_buffer.shape[1],
+            my_pos.y > (template_buffer.shape[1] - 1),
+            my_pos.z < -template_buffer.shape[1],
+            my_pos.z > (template_buffer.shape[1] - 1))):
+
+            for i in range(template_buffer.shape[0]):
+                index = ind + i * template_buffer.shape[1] * template_buffer.shape[2]
+                buff[index].real = 0
+                buff[index].imag = 0
+            vc.return_statement()
+
+        value = img.sample(my_pos.swizzle("xyz")).swizzle("xy").to_dtype(vc.c64).to_register()
+
+        ipos_2d = vc.new_ivec2_register()
+        ipos_2d.x = ind % template_buffer.shape[2]
+        ipos_2d.y = ((ind // template_buffer.shape[2]) + template_buffer.shape[1] // 2) % template_buffer.shape[1]
+
+        pos_2d = ipos_2d.to_dtype(vc.v2).to_register()
+        pos_2d.y = pos_2d.y - template_buffer.shape[1] // 2
+
+        ctf_param_list = ctf_params.assemble_params_list_from_args(in_args, template_buffer.shape[0])
+
+        for i in range(template_buffer.shape[0]):
+            index = ind + i * template_buffer.shape[1] * template_buffer.shape[2]
+            if disable_ctf:
+                buff[index] = value
+            else:
+                buff[index] = vc.mult_complex(value, ctf_filter(
+                    template_buffer.shape[1:],
+                    pos_2d,
+                    ctf_param_list[i],
+                    pix_size
+                ))
+
+    extract_fft_slices_shader(
+        template_buffer,
+        sampler,
+        image_size,
+        rotations,
+        pixel_size,
+        *ctf_params.get_args(cmd_graph, template_buffer.shape[0])
+    )
 
 class TemplateDensity(Template):
     shape: Tuple[int, int]
     density_array: np.ndarray
+    density_pixel_size: float
     density_image: vd.Image3D
     disable_ctf: bool
 
-    def __init__(self, density_array: np.ndarray, transformed: bool = False, disable_ctf: bool = False):
+    def __init__(self,
+                 density_array: np.ndarray,
+                 density_pixel_size: float,
+                 transformed: bool = False,
+                 disable_ctf: bool = False):
         assert density_array.ndim == 3, "Density array must be a 3D array."
 
         self.disable_ctf = disable_ctf
         self.density_array = density_array
+        self.density_pixel_size = density_pixel_size
 
-        if transformed:
+        if not transformed:
             self.density_array = np.fft.fftn(np.fft.fftshift(density_array)).astype(np.complex64)
 
         self.density_array = self.density_array.astype(np.complex64)
@@ -138,102 +219,38 @@ class TemplateDensity(Template):
         )
         self.density_image.write(self.density_array)
 
+        self.density_image.sample
+
         self.shape = (self.density_array.shape[0], self.density_array.shape[1])
 
     def _make_template(self,
                     rotations: vc.Var[vc.m4],
                     pixel_size: float,
-                    defoci: List[vc.Var[vc.v4]],
-                    ctf_params: CTFParams) -> vd.RFFTBuffer:
+                    ctf_params: CTFParams,
+                    template_count: int,
+                    cmd_graph: vd.CommandGraph) -> vd.RFFTBuffer:
 
-        template_buffer_temp = vd.RFFTBuffer((len(defoci), *self.shape))
+        template_buffer_temp = vd.RFFTBuffer((template_count, *self.shape))
 
-        rotation_type: type = vc.Const[vc.m4] if isinstance(rotations, np.ndarray) else vc.Var[vc.m4]
-
-        def extract_fft_slices_func(
-            buff: vc.Buff[vc.c64],
-            img: vc.Img3[vc.f32],
-            img_shape: vc.Const[vc.iv4],
-            rotation: vc.Var[vc.m4],
-            *defocus_values: vc.Var[vc.v4]):
-
-            ind = vc.global_invocation().x.cast_to(vc.i32).copy()
-
-            # calculate the planar position of the current buffer pixel
-            my_pos = vc.new_vec4(0, 0, 0, 1)
-            my_pos.x = ind % template_buffer_temp.shape[2]
-            my_pos.y = ind / template_buffer_temp.shape[2]
-
-            my_pos.y += img_shape.y / 2
-            my_pos.y[:] = vc.mod(my_pos.y, img_shape.y)
-            my_pos.y -= img_shape.y / 2
-
-            # rotate the position to 3D template space
-            my_pos[:] = rotation * my_pos
-
-            vc.if_any(
-                my_pos.x < -template_buffer_temp.shape[1],
-                my_pos.x > (template_buffer_temp.shape[1] - 1),
-                my_pos.y < -template_buffer_temp.shape[1],
-                my_pos.y > (template_buffer_temp.shape[1] - 1),
-                my_pos.z < -template_buffer_temp.shape[1],
-                my_pos.z > (template_buffer_temp.shape[1] - 1))
-            for i in range(template_buffer_temp.shape[0]):
-                index = ind + i * template_buffer_temp.shape[1] * template_buffer_temp.shape[2]
-                buff[index].x = 0
-                buff[index].y = 0
-            vc.return_statement()
-            vc.end()
-
-            my_pos.xy[:] = img.sample(my_pos.xyz).xy
-
-            pos_2d = vc.new_vec2()
-            pos_2d.x = ind % template_buffer_temp.shape[2]
-            pos_2d.y = ((ind / template_buffer_temp.shape[2]) + template_buffer_temp.shape[1] // 2) % template_buffer_temp.shape[1]
-            pos_2d.y = pos_2d.y - template_buffer_temp.shape[1] // 2
-
-            for i in range(template_buffer_temp.shape[0]):
-                index = ind + i * template_buffer_temp.shape[1] * template_buffer_temp.shape[2]
-                if self.disable_ctf:
-                    buff[index] = my_pos.xy
-                else:
-                    buff[index] = vc.mult_complex(my_pos.xy, ctf_filter(
-                        template_buffer_temp.shape[1:],
-                        defocus_values[i],
-                        pos_2d,
-                        ctf_params,
-                        pixel_size
-                    ))
-
-        with vc.builder_context() as builder:
-            signature = vd.ShaderSignature.from_type_annotations(builder, [
-                vc.Buff[vc.c64], # output buffer
-                vc.Img3[vc.f32], # input image
-                vc.Const[vc.iv4], # input image shape
-                rotation_type, # rotation matrix
-            ] + [vc.Var[vc.v4]] * len(defoci))
-
-            extract_fft_slices_func(*signature.get_variables())
-
-            extract_fft_slices_shader = vd.ShaderObject(
-                builder.build("extract_fft_slices_shader"),
-                signature,
-                exec_count=template_buffer_temp.shape[1] * template_buffer_temp.shape[2]
-            )
-
-        extract_fft_slices_shader(
+        # extract the 2D slices from the 3D density and apply the ctf
+        extract_fft_slices(
             template_buffer_temp,
             self.density_image.sample(
                 address_mode=vd.AddressMode.REPEAT,
             ),
-            (*self.density_array.shape, 0),
+            self.density_array.shape[1],
             rotations,
-            *defoci
+            pixel_size,
+            self.density_pixel_size,
+            ctf_params,
+            self.disable_ctf,
+            cmd_graph
         )
 
-        vd.fft.irfft2(template_buffer_temp)
 
-        template_buffer = vd.RFFTBuffer((len(defoci), *self.shape))
+        vd.fft.irfft2(template_buffer_temp, normalize=False)
+
+        template_buffer = vd.RFFTBuffer((template_count, *self.shape))
 
         fftshift(template_buffer, template_buffer_temp)
 

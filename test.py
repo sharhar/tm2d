@@ -32,13 +32,15 @@ small_region = tu.OrientationRegion(
 
 output_dir = sys.argv[1]
 
-template_atomic = tm2d.TemplateAtomic(
-    (512, 512),
-    tu.load_coords_from_npz("data/parsed_5lks_LSU.npz"),
-    # fuse_ctf_convolution=True,
-)
+# template_atomic = tm2d.TemplateAtomic(
+#     (512, 512),
+#     tu.load_coords_from_npz("data/parsed_5lks_LSU.npz"),
+#     # fuse_ctf_convolution=True,
+# )
 
-#template_atomic = tm2d.
+density = tu.load_density_from_mrc("data/parsed_5lks_LSU_sim_120.mrc")
+
+template_atomic = tm2d.TemplateDensity(density.density, density.pixel_size)
 
 data_array = np.array(
     [
