@@ -39,6 +39,9 @@ class CTFSet:
     def get_length(self):
         return self.combinations_array.shape[0]
 
+    def get_field_names(self):
+        return self.field_names
+
     def get_lengths_list(self):
         return self.lengths
 
@@ -499,7 +502,7 @@ class CTFParams:
                 static_values[dyn_ind] = dynamic_args_list[i * dynamic_count + ii]
 
             result.append(CTFParams.from_arg_list(*static_values))
-            
+
         return result
 
     def make_ctf_set(self, **values_dict) -> CTFSet:

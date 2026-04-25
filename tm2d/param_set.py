@@ -55,7 +55,7 @@ class ParamSet:
 
         return values
 
-    def _get_tensor_shape(self, micrograph_count: int) -> tuple:
+    def get_tensor_shape(self, micrograph_count: int) -> tuple:
         ctf_lengths = self.ctf_set.get_lengths_list()
         params_count = len(ctf_lengths) + 1
 
@@ -75,10 +75,21 @@ class ParamSet:
 
         return (micrograph_count, ) + shape_prefix + tuple(ctf_lengths) + (params_count,)
 
-    def get_values_tensor(self, mip_list: np.ndarray) -> np.ndarray:
+    def get_tensor_axes_names(self) -> tuple:
+        if self.rotations is None and self.pixel_sizes is None:
+            return ["micrograph"] + self.ctf_set.get_field_names()
+
+        elif self.rotations is None:
+            return ["micrograph", "pixel_size"] + self.ctf_set.get_field_names()
+        elif self.pixel_sizes is None:
+            return ["micrograph", "rotation"] + self.ctf_set.get_field_names()
+
+        return ["micrograph", "rotation", "pixel_size"] + self.ctf_set.get_field_names()
+
+    def get_values_tensor(self, mip_list: np.ndarray) -> tuple[np.ndarray, dict[str, int]]:
         cropped_mip_list = mip_list[:, :self.get_total_count()]
 
-        tensor_shape = self._get_tensor_shape(cropped_mip_list.shape[0])
+        tensor_shape = self.get_tensor_shape(cropped_mip_list.shape[0])
 
         has_rotations = self.rotations is not None
         has_pixel_sizes = self.pixel_sizes is not None
