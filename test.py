@@ -31,10 +31,14 @@ small_region = tu.OrientationRegion(
 # /BigData/Workspaces/shahar/data
 
 output_dir = sys.argv[1]
+
 template_atomic = tm2d.TemplateAtomic(
     (512, 512),
-    tu.load_coords_from_npz("data/parsed_5lks_LSU.npz")
+    tu.load_coords_from_npz("data/parsed_5lks_LSU.npz"),
+    # fuse_ctf_convolution=True,
 )
+
+#template_atomic = tm2d.
 
 data_array = np.array(
     [

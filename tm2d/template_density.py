@@ -1,6 +1,5 @@
 import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abbreviations import *
 
 import tm2d
 
@@ -11,13 +10,8 @@ from .ctf import CTFParams, ctf_filter
 
 import numpy as np
 
-# Templte density is deprecated for now, may come back to it later
-
-"""
-
 @vd.shader(exec_size=lambda args: args.input_buff.size * 2)
 def fftshift(output: vc.Buff[vc.f32], input_buff: vc.Buff[vc.f32]):
-
     ind = vc.global_invocation_id().x.to_dtype(vd.int32).to_register()
 
     image_ind = vc.new_int_register()
@@ -26,11 +20,10 @@ def fftshift(output: vc.Buff[vc.f32], input_buff: vc.Buff[vc.f32]):
     out_x = (image_ind // (2 * input_buff.shape.z)).to_register()
     out_y = (image_ind % (2 * input_buff.shape.z)).to_register()
 
-    vc.if_statement(out_y >= 2 * input_buff.shape.z - 2)
-    output[ind].x = 0
-    output[ind].y = 0
-    vc.return_statement()
-    vc.end()
+    with vc.if_block(out_y >= 2 * input_buff.shape.z - 2):
+        output[ind].x = 0
+        output[ind].y = 0
+        vc.return_statement()
 
     image_ind[:] = ind // (input_buff.shape.y * input_buff.shape.z * 2)
 
@@ -44,28 +37,39 @@ def fftshift(output: vc.Buff[vc.f32], input_buff: vc.Buff[vc.f32]):
     output[ind] = input_buff[image_ind]
 
 @vd.shader(exec_size=lambda args: args.buff.size)
-def template_slice(buff: Buff[c64], img: Img3[f32], img_shape: Const[iv4], rotation: Var[m4]):
+def template_slice(buff: vc.Buff[vc.c64], img: vc.Img3[vc.f32], img_shape: vc.Const[vc.iv4], rotation: vc.Var[vc.m4]):
     ind = vc.global_invocation_id().x.to_dtype(vd.int32).to_register()
-    
+
     # calculate the planar position of the current buffer pixel
+    pos_2d = vc.ravel_index(ind, buff.shape).swizzle("xy").to_dtype(vc.v2).to_register()
+
     my_pos = vc.new_vec4_register(0, 0, 0, 1)
-    my_pos.swizzle("xy")[:] = vc.ravel_index(ind, buff.shape).swizzle("xy")
+    my_pos.x = pos_2d.x + buff.shape.x / 2
+    my_pos.y = pos_2d.y + buff.shape.y / 2
 
-    p2 = my_pos.swizzle("xy")
-    p2 += buff.shape.swizzle("xy") / 2
+    #p2 = my_pos.swizzle("xy")
+    #p2 += buff.shape.swizzle("xy") / 2
 
-    my_pos.swizzle("xy")[:] = vc.mod(my_pos.swizzle("xy"), buff.shape.swizzle("xy"))
+    temp_var = vc.mod(my_pos.swizzle("xy"), buff.shape.swizzle("xy")).to_register()
 
-    p2 = my_pos.swizzle("xy")
-    p2 -= buff.shape.swizzle("xy") / 2
+    my_pos.x = temp_var.x - buff.shape.x / 2
+    my_pos.y = temp_var.y - buff.shape.y / 2
+
+    #p2 = my_pos.swizzle("xy")
+    #p2 -= buff.shape.swizzle("xy") / 2
 
     # rotate the position to 3D template space
     my_pos[:] = rotation * my_pos
-    p3 = my_pos.swizzle("xyz")
-    p3 += img_shape.swizzle("xyz").cast_to(v3) / 2
-    
+
+    my_pos.x += img_shape.x / 2
+    my_pos.y += img_shape.y / 2
+    my_pos.z += img_shape.z / 2
+
+    #p3 = my_pos.swizzle("xyz")
+    #p3 += img_shape.swizzle("xyz").to_dtype(vc.v3) / 2
+
     # sample the 3D image at the current position
-    buff[ind] = img.sample(my_pos.swizzle("xyz")).swizzle("xy")
+    buff[ind] = img.sample(my_pos.swizzle("xyz")).swizzle("xy").to_dtype(vc.c64)
 
 def make_density_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     m = np.zeros(shape=(4, 4, angles.shape[0]), dtype=np.float32)
@@ -84,8 +88,8 @@ def make_density_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     m[0][1]   = -cos_phi * cos_theta * sin_psi - sin_phi * cos_psi
     m[1][1]   = -sin_phi * cos_theta * sin_psi + cos_phi * cos_psi
     m[2][1]   = sin_theta * sin_psi
-    #m[3][1]   = offsets[1]    
-    
+    #m[3][1]   = offsets[1]
+
     m[0][2]   = sin_theta * cos_phi
     m[1][2]   = sin_theta * sin_phi
     m[2][2]   = cos_theta
@@ -112,7 +116,6 @@ def make_density_template(
 
     return signal
 
-
 class TemplateDensity(Template):
     shape: Tuple[int, int]
     density_array: np.ndarray
@@ -127,7 +130,7 @@ class TemplateDensity(Template):
 
         if transformed:
             self.density_array = np.fft.fftn(np.fft.fftshift(density_array)).astype(np.complex64)
-        
+
         self.density_array = self.density_array.astype(np.complex64)
 
         self.density_image = vd.Image3D(
@@ -136,13 +139,13 @@ class TemplateDensity(Template):
         self.density_image.write(self.density_array)
 
         self.shape = (self.density_array.shape[0], self.density_array.shape[1])
-    
+
     def _make_template(self,
                     rotations: vc.Var[vc.m4],
                     pixel_size: float,
                     defoci: List[vc.Var[vc.v4]],
                     ctf_params: CTFParams) -> vd.RFFTBuffer:
-        
+
         template_buffer_temp = vd.RFFTBuffer((len(defoci), *self.shape))
 
         rotation_type: type = vc.Const[vc.m4] if isinstance(rotations, np.ndarray) else vc.Var[vc.m4]
@@ -201,23 +204,23 @@ class TemplateDensity(Template):
                         ctf_params,
                         pixel_size
                     ))
-        
+
         with vc.builder_context() as builder:
             signature = vd.ShaderSignature.from_type_annotations(builder, [
                 vc.Buff[vc.c64], # output buffer
                 vc.Img3[vc.f32], # input image
                 vc.Const[vc.iv4], # input image shape
                 rotation_type, # rotation matrix
-            ] + [Var[v4]] * len(defoci))
+            ] + [vc.Var[vc.v4]] * len(defoci))
 
             extract_fft_slices_func(*signature.get_variables())
 
             extract_fft_slices_shader = vd.ShaderObject(
-                builder.build("extract_fft_slices_shader"), 
+                builder.build("extract_fft_slices_shader"),
                 signature,
                 exec_count=template_buffer_temp.shape[1] * template_buffer_temp.shape[2]
             )
-        
+
         extract_fft_slices_shader(
             template_buffer_temp,
             self.density_image.sample(
@@ -235,10 +238,9 @@ class TemplateDensity(Template):
         fftshift(template_buffer, template_buffer_temp)
 
         return template_buffer
-    
+
     def get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
         return make_density_template_rotation_matrix(rotations).astype(np.float32)
-    
+
     def get_shape(self) -> tuple:
         return self.shape
-"""

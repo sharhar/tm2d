@@ -1,4 +1,4 @@
-# VkTM2D
+# tm2d
 A 2D template matcher written using the vkdispatch library.
 
 ## Installation

@@ -6,7 +6,7 @@ from .ctf import ctf_filter
 from .ctf import generate_ctf
 
 from .template_atomic import TemplateAtomic
-#from .template_density import TemplateDensity
+from .template_density import TemplateDensity
 
 from .cross_correlation import ComparatorCrossCorrelation
 
@@ -25,7 +25,7 @@ __all__ = [
     "ctf_filter",
     "generate_ctf",
     "TemplateAtomic",
-    #"TemplateDensity",
+    "TemplateDensity",
     "ComparatorCrossCorrelation",
     "ResultsPixel",
     "ResultsParam",
