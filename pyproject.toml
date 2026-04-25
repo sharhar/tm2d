@@ -29,7 +29,10 @@ Issues = "https://github.com/sharhar/tm2d/issues"
 
 [tool.setuptools]
 packages = [
-    "tm2d"
+    "tm2d",
+    "tm2d.templates",
+    "tm2d.comparators",
+    "tm2d.results",
 ]
 
 [project.optional-dependencies]

@@ -13,8 +13,6 @@ from .results.per_param import ResultsParam
 
 from .plan import Plan, Template, Comparator, Results, ParamSet
 
-from .plan_standard import PlanStandard
-
 __all__ = [
     "CTFParams",
     "CTFSet",
@@ -30,5 +28,4 @@ __all__ = [
     "Comparator",
     "Results",
     "ParamSet",
-    "PlanStandard",
 ]
