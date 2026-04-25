@@ -3,7 +3,7 @@ import vkdispatch.codegen as vc
 
 import numpy as np
 
-from .plan import Results
+from ..plan import Results
 
 # To avoid errors from the limited precision of floating point numbers, we use 2 32-bit floats
 # to approximate a higher precision accumulator.

@@ -6,8 +6,8 @@ from typing import Tuple
 
 import numpy as np
 
-from .plan import Template
-from .ctf import CTFParams, ctf_filter
+from ..plan import Template
+from ..ctf import CTFParams, ctf_filter
 
 def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     in_matricies = np.zeros(shape=(4, 4, angles.shape[0]), dtype=np.float32)

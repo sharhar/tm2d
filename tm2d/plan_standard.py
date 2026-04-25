@@ -1,8 +1,8 @@
 from .plan import Plan, Template
 from .ctf import CTFParams
 
-from .cross_correlation import ComparatorCrossCorrelation
-from .results_per_pixel import ResultsPixel
+from .comparators.cross_correlation import ComparatorCrossCorrelation
+from .results.per_pixel import ResultsPixel
 
 import numpy as np
 

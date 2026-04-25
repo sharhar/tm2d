@@ -241,6 +241,12 @@ class Plan:
     ctf_params: CTFParams
     template_batch_size: int
 
+    _status_bar: Optional[tqdm.tqdm]
+    _rotations_array: Optional[np.ndarray]
+    _pixel_sizes_array: Optional[np.ndarray]
+    _ctf_index_arrays: Optional[np.ndarray]
+    _index_arrays: Optional[np.ndarray]
+
     def __init__(self,
                  template: Template,
                  comparator: Comparator,
@@ -261,6 +267,12 @@ class Plan:
         self.rotation = rotation
         self.pixel_size = pixel_size
         self.ctf_params = ctf_params
+
+        self._status_bar = None
+        self._rotations_array = None
+        self._pixel_sizes_array = None
+        self._ctf_index_arrays = None
+        self._index_arrays = None
 
         self.cmd_graph = vd.CommandGraph()
 
@@ -289,24 +301,95 @@ class Plan:
     def reset(self):
         self.results.reset()
 
-    def run(self,
-            params: ParamSet,
-            enable_progress_bar: bool = False,
-            batch_size: int = 32):
+    def _iter_rotations(self,
+                        params: ParamSet,
+                        repeats: int,
+                        full_batch_size: int,
+                        rotations_batch_size: int,
+                        ctf_count: int):
+        for rotation_index in range(0, params.get_rotation_count(), rotations_batch_size):
+            actual_rotation_batch_size = min(rotations_batch_size, params.get_rotation_count() - rotation_index)
 
-        rotations_array = np.zeros(shape=(batch_size, 3), dtype=np.float32)
-        pixel_sizes_array = np.zeros(shape=(batch_size,), dtype=np.float32)
-        ctf_index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
-        index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
+            if params.rotations is not None:
+                self._rotations_array[:actual_rotation_batch_size * repeats] = np.repeat(
+                    params.rotations[rotation_index:rotation_index + actual_rotation_batch_size, :],
+                    repeats=repeats,
+                    axis=0
+                )
+
+                self.cmd_graph.set_var(
+                    "rotation_matrix",
+                    self.template.get_rotation_matricies(self._rotations_array[:full_batch_size, :])
+                )
+
+            rotation_offset = params.get_ctf_count() * params.get_pixel_size_count() * rotation_index
+
+            for k in range(self.template_batch_size):
+                self.cmd_graph.set_var(
+                    f"index{k}",
+                    self._index_arrays[k][:full_batch_size] + rotation_offset
+                )
+
+            self.cmd_graph.submit_any(full_batch_size)
+
+            if self._status_bar is not None:
+                self._status_bar.update(ctf_count * actual_rotation_batch_size)
+
+    def _iter_pixel_sizes(self,
+                            params: ParamSet,
+                            ctf_batch_size: int,
+                            full_batch_size: int,
+                            pixel_batch_size: int,
+                            rotations_batch_size: int,
+                            ctf_count: int):
+
+        for pixel_size_index in range(0, params.get_pixel_size_count(), pixel_batch_size):
+            actual_pixel_batch_size = min(pixel_batch_size, params.get_pixel_size_count() - pixel_size_index)
+
+            pixel_batch_width = pixel_batch_size * ctf_batch_size
+
+            if params.pixel_sizes is not None:
+                self._pixel_sizes_array[:actual_pixel_batch_size * ctf_batch_size] = np.repeat(
+                    params.pixel_sizes[pixel_size_index:pixel_size_index + actual_pixel_batch_size],
+                    repeats=ctf_batch_size,
+                    axis=0
+                )
+
+                for k in range(self.template_batch_size):
+                    self._index_arrays[k][:full_batch_size] = self._ctf_index_arrays[k][:full_batch_size] + params.get_ctf_count() * pixel_size_index
+
+                    for rot_ind in range(rotations_batch_size):
+                        self._index_arrays[k][pixel_batch_width*rot_ind + actual_pixel_batch_size * ctf_batch_size:pixel_batch_width*(rot_ind+1)] = -params.get_total_count()
+
+
+                self._pixel_sizes_array[:full_batch_size] = np.tile(
+                    self._pixel_sizes_array[:pixel_batch_size * ctf_batch_size],
+                    rotations_batch_size
+                )
+
+                self.cmd_graph.set_var("pixel_size", self._pixel_sizes_array[:full_batch_size])
+            elif params.get_pixel_size_count() == 1:
+                for k in range(self.template_batch_size):
+                    self._index_arrays[k][:full_batch_size] = self._ctf_index_arrays[k][:full_batch_size]
+
+                    for rot_ind in range(rotations_batch_size):
+                        self._index_arrays[k][pixel_batch_width*rot_ind + actual_pixel_batch_size * ctf_batch_size:pixel_batch_width*(rot_ind+1)] = -params.get_total_count()
+
+            else:
+                raise ValueError("Something went wrong.")
+
+            self._iter_rotations(
+                params=params,
+                repeats=ctf_batch_size * pixel_batch_size,
+                full_batch_size=full_batch_size,
+                rotations_batch_size=rotations_batch_size,
+                ctf_count=ctf_count
+            )
+
+    def _iter_ctf_params(self, params: ParamSet, batch_size: int):
 
         max_batch_size = self.template_batch_size * batch_size
         input_array = np.zeros(shape=(batch_size,), dtype=np.float32)
-
-        if params.get_ctf_count() == 1 and self.template_batch_size > 1:
-            print("Warning: Only one ctf parameter combination provided, but template_batch_size is greater than 1. This will result in suboiptimal performance.")
-
-        if enable_progress_bar:
-            status_bar = tqdm.tqdm(total=params.get_total_count(), dynamic_ncols=True)
 
         for i in range(0, params.get_ctf_count(), max_batch_size):
             ctf_count = min(max_batch_size, params.get_ctf_count() - i)
@@ -327,7 +410,7 @@ class Plan:
             full_batch_size = ctf_batch_size * rotations_batch_size * pixel_batch_size
 
             params.ctf_set.set_ctf_batch(
-                ctf_index_arrays,
+                self._ctf_index_arrays,
                 input_array,
                 self.cmd_graph,
                 ctf_batch_size,
@@ -337,73 +420,43 @@ class Plan:
                 i
             )
 
-            for pixel_size_index in range(0, params.get_pixel_size_count(), pixel_batch_size):
-                actual_pixel_batch_size = min(pixel_batch_size, params.get_pixel_size_count() - pixel_size_index)
+            self._iter_pixel_sizes(
+                params=params,
+                ctf_batch_size=ctf_batch_size,
+                full_batch_size=full_batch_size,
+                pixel_batch_size=pixel_batch_size,
+                rotations_batch_size=rotations_batch_size,
+                ctf_count=ctf_count
+            )
 
-                pixel_batch_width = pixel_batch_size * ctf_batch_size
+    def run(self,
+            params: ParamSet,
+            enable_progress_bar: bool = False,
+            batch_size: int = 32):
 
-                if params.pixel_sizes is not None:
-                    pixel_sizes_array[:actual_pixel_batch_size * ctf_batch_size] = np.repeat(
-                        params.pixel_sizes[pixel_size_index:pixel_size_index + actual_pixel_batch_size],
-                        repeats=ctf_batch_size,
-                        axis=0
-                    )
+        self._rotations_array = np.zeros(shape=(batch_size, 3), dtype=np.float32)
+        self._pixel_sizes_array = np.zeros(shape=(batch_size,), dtype=np.float32)
+        self._ctf_index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
+        self._index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
 
-                    for k in range(self.template_batch_size):
-                        index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size] + params.get_ctf_count() * pixel_size_index
+        if params.get_ctf_count() == 1 and self.template_batch_size > 1:
+            print("Warning: Only one ctf parameter combination provided, but template_batch_size is greater than 1. This will result in suboiptimal performance.")
 
-                        for rot_ind in range(rotations_batch_size):
-                            index_arrays[k][pixel_batch_width*rot_ind + actual_pixel_batch_size * ctf_batch_size:pixel_batch_width*(rot_ind+1)] = -params.get_total_count()
+        if enable_progress_bar:
+            self._status_bar = tqdm.tqdm(total=params.get_total_count(), dynamic_ncols=True)
 
-
-                    pixel_sizes_array[:full_batch_size] = np.tile(
-                        pixel_sizes_array[:pixel_batch_size * ctf_batch_size],
-                        rotations_batch_size
-                    )
-
-                    self.cmd_graph.set_var("pixel_size", pixel_sizes_array[:full_batch_size])
-                elif params.get_pixel_size_count() == 1:
-                    for k in range(self.template_batch_size):
-                        index_arrays[k][:full_batch_size] = ctf_index_arrays[k][:full_batch_size]
-
-                        for rot_ind in range(rotations_batch_size):
-                            index_arrays[k][pixel_batch_width*rot_ind + actual_pixel_batch_size * ctf_batch_size:pixel_batch_width*(rot_ind+1)] = -params.get_total_count()
-
-                else:
-                    raise ValueError("Something went wrong.")
-
-                for rotation_index in range(0, params.get_rotation_count(), rotations_batch_size):
-                    actual_rotation_batch_size = min(rotations_batch_size, params.get_rotation_count() - rotation_index)
-
-                    if params.rotations is not None:
-                        rotations_array[:actual_rotation_batch_size * ctf_batch_size * pixel_batch_size] = np.repeat(
-                            params.rotations[rotation_index:rotation_index + actual_rotation_batch_size, :],
-                            repeats=ctf_batch_size * pixel_batch_size,
-                            axis=0
-                        )
-
-                        self.cmd_graph.set_var(
-                            "rotation_matrix",
-                            self.template.get_rotation_matricies(rotations_array[:full_batch_size, :])
-                        )
-
-                    rotation_offset = params.get_ctf_count() * params.get_pixel_size_count() * rotation_index
-
-                    for k in range(self.template_batch_size):
-                        self.cmd_graph.set_var(
-                            f"index{k}",
-                            index_arrays[k][:full_batch_size] + rotation_offset
-                        )
-
-                    self.cmd_graph.submit_any(full_batch_size)
-
-                    if enable_progress_bar:
-                        status_bar.update(ctf_count * actual_rotation_batch_size)
+        self._iter_ctf_params(params, batch_size)
 
         self.results.compile_results(params.get_total_count())
 
-        if enable_progress_bar:
-            status_bar.close()
+        if self._status_bar is not None:
+            self._status_bar.close()
+            self._status_bar = None
+
+        self._rotations_array = None
+        self._pixel_sizes_array = None
+        self._ctf_index_arrays = None
+        self._index_arrays = None
 
     def make_param_set(self,
                         rotations: Optional[np.ndarray] = None,

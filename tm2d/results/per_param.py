@@ -3,7 +3,7 @@ import vkdispatch.codegen as vc
 
 import numpy as np
 
-from .plan import Results, ParamSet
+from ..plan import Results, ParamSet
 
 class ResultsParam(Results):
     best_values_buffer: vd.Buffer

@@ -4,7 +4,7 @@ from vkdispatch.codegen.abbreviations import Buff, f32, c64, v2, Const
 
 import numpy as np
 
-from .plan import Comparator
+from ..plan import Comparator
 
 def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tuple) -> vd.MappingFunction:
     @vd.map
