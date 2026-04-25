@@ -8,52 +8,38 @@ from .plan import Comparator
 
 def make_crop_mapping(micrograph_shape: tuple[int, int, int], template_shape: tuple) -> vd.MappingFunction:
     @vd.map
-    def crop_mapping(input: Buff[f32], sum_buffer: Buff[c64]):
+    def crop_mapping(in_buff: Buff[f32], sum_buffer: Buff[c64]):
         read_op = vd.fft.read_op()
 
-        template_index = read_op.io_index // (micrograph_shape[1] * (micrograph_shape[2] + 2))
-        ind = vc.new_uint_register(read_op.io_index % (micrograph_shape[1] * (micrograph_shape[2] + 2)))
-        ind[:] = ind - 2 * (ind // micrograph_shape[2])
+        read_index_3d = vc.ravel_index(
+            read_op.io_index,
+            (micrograph_shape[0], micrograph_shape[1], micrograph_shape[2] + 2)
+        ).to_register()
 
-        out_x = (ind // micrograph_shape[2]) % micrograph_shape[1]
-        out_y = ind % micrograph_shape[2]
+        read_index_3d.y -= micrograph_shape[1] // 2
+        read_index_3d.z -= micrograph_shape[2] // 2
 
-        in_coords = vc.new_uvec2_register()
+        read_index_3d.y += template_shape[0] // 2
+        read_index_3d.z += template_shape[1] // 2
 
         with vc.if_block(vc.any(
-            vc.all(
-                out_x >= template_shape[0] // 2,
-                out_x < micrograph_shape[1] - template_shape[0] // 2
-            ),
-            vc.all(
-                out_y >= template_shape[1] // 2,
-                out_y < micrograph_shape[2] - template_shape[1] // 2
-            )
-        )):
+                read_index_3d.y < 0,
+                read_index_3d.y >= template_shape[0],
+                read_index_3d.z < 0,
+                read_index_3d.z >= template_shape[1]
+            )):
             read_op.register.real = 0.0
             read_op.register.imag = 0.0
-
         with vc.else_block():
-            with vc.if_block(out_x < micrograph_shape[1] // 2):
-                in_coords.x = out_x
-            with vc.else_block():
-                in_coords.x = template_shape[0] + out_x - micrograph_shape[1]
+            read_index_flat = vc.unravel_index(
+                read_index_3d,
+                (micrograph_shape[0], template_shape[0], template_shape[1] + 2)
+            ).to_register()
 
-            with vc.if_block(out_y < micrograph_shape[2] // 2):
-                in_coords.y = out_y
-            with vc.else_block():
-                in_coords.y = template_shape[1] + out_y - micrograph_shape[2]
-
-            in_coords.x = in_coords.x * template_shape[1] + in_coords.y
-
-            read_op.register[:] = sum_buffer[template_index] / (template_shape[0] * template_shape[1])
+            read_op.register[:] = sum_buffer[read_index_3d.x] / (template_shape[0] * template_shape[1])
             read_op.register.imag = vc.sqrt(read_op.register.imag - read_op.register.real * read_op.register.real)
 
-            in_coords.x = in_coords.x + 2 * (in_coords.x // (template_shape[1]))
-
-            in_coords.x = in_coords.x + template_index * (micrograph_shape[1] * (micrograph_shape[2] + 2))
-
-            read_op.register.real = (input[in_coords.x] - read_op.register.real) / read_op.register.imag
+            read_op.register.real = (in_buff[read_index_flat] - read_op.register.real) / read_op.register.imag
             read_op.register.imag = 0
 
     return crop_mapping

@@ -30,6 +30,18 @@ ta = template_atomic.make_template(
     template_count=1,
 )
 
+out_shape = (1, 512, 512)
+
+comp = tm2d.ComparatorCrossCorrelation(out_shape, (576, 576))
+
+comp.set_data(np.ones(out_shape))
+
+cd = comp.compare_template(td)
+ca = comp.compare_template(ta)
+
 np.save("td.npy", td.read_real(0)[0])
 np.save("ta.npy", ta.read_real(0)[0])
+
+np.save("cd.npy", cd.read_real(0)[0])
+np.save("ca.npy", ca.read_real(0)[0])
 
