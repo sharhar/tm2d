@@ -1,7 +1,7 @@
 import numpy as np
 from typing import Optional
 
-from .ctf import CTFSet
+from .ctf.ctf_set import CTFSet
 
 class ParamSet:
     rotations: Optional[np.ndarray] = None

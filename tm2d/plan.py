@@ -3,7 +3,7 @@ import numpy as np
 import tqdm
 from typing import Optional
 
-from .ctf import CTFParams
+from .ctf.ctf import CTFParams
 
 from .base_template import Template
 from .base_comparator import Comparator

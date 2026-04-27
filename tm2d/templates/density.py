@@ -4,7 +4,7 @@ import vkdispatch.codegen as vc
 from typing import Tuple
 
 from ..plan import Template
-from ..ctf import CTFParams, ctf_filter
+from ..ctf.ctf import CTFParams, ctf_filter
 
 import numpy as np
 

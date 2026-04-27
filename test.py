@@ -13,8 +13,8 @@ ctf_params = tm2d.CTFParams.like_krios(
     Cs = 2.7e7
 )
 
-pixel_sizes = np.arange(1.04, 1.08, 0.00004)
-B_factors = np.arange(0, 250, 0.25)
+pixel_sizes = np.arange(1.04, 1.08, 0.0004)
+B_factors = np.arange(0, 250, 2.5)
 
 params = tm2d.ParamSet.from_params(
     rotations=np.array([[188.84183,  78.82107, 326]]),
@@ -82,9 +82,9 @@ plt.colorbar()
 plt.title(f"Z-scores {template_type}")
 plt.xlabel("B Factor")
 plt.ylabel("Pixel Size")
-plt.savefig(f"zscore_{template_type}.png")
+#plt.savefig(f"zscore_{template_type}.png")
 plt.show()
-np.save(f"zscore_{template_type}.npy", zscore_list[0][0])
+#np.save(f"zscore_{template_type}.npy", zscore_list[0][0])
 
 plt.imshow(
     mip_list[0][0],
@@ -99,9 +99,9 @@ plt.colorbar()
 plt.title(f"MIPs {template_type}")
 plt.xlabel("B Factor")
 plt.ylabel("Pixel Size")
-plt.savefig(f"mip_{template_type}.png")
+#plt.savefig(f"mip_{template_type}.png")
 plt.show()
-np.save(f"mip_{template_type}.npy", mip_list[0][0])
+#np.save(f"mip_{template_type}.npy", mip_list[0][0])
 
 print(mip_list.shape)
 

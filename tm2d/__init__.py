@@ -1,7 +1,6 @@
-from .ctf import CTFParams
-from .ctf import CTFSet
-from .ctf import ctf_filter
-from .ctf import generate_ctf
+from .ctf.ctf_params import CTFParams
+from .ctf.ctf_set import CTFSet
+from .ctf.ctf import ctf_filter
 
 from .templates.atomic import TemplateAtomic
 from .templates.density import TemplateDensity
@@ -17,7 +16,6 @@ __all__ = [
     "CTFParams",
     "CTFSet",
     "ctf_filter",
-    "generate_ctf",
     "TemplateAtomic",
     "TemplateDensity",
     "ComparatorCrossCorrelation",

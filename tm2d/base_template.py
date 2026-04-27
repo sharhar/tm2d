@@ -3,7 +3,7 @@ import vkdispatch.codegen as vc
 import numpy as np
 
 from typing import Union, List, Tuple
-from .ctf import CTFParams
+from .ctf.ctf import CTFParams
 
 class Template:
     def __init__(self):
