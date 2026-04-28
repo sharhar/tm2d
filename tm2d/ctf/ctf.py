@@ -1,6 +1,4 @@
-import vkdispatch as vd
 import vkdispatch.codegen as vc
-from vkdispatch.codegen.abbreviations import *
 
 import math
 

@@ -45,16 +45,10 @@ def template_slice(buff: vc.Buff[vc.c64], img: vc.Img3[vc.f32], img_shape: vc.Co
     my_pos.x = pos_2d.x + buff.shape.x / 2
     my_pos.y = pos_2d.y + buff.shape.y / 2
 
-    #p2 = my_pos.swizzle("xy")
-    #p2 += buff.shape.swizzle("xy") / 2
-
     temp_var = vc.mod(my_pos.swizzle("xy"), buff.shape.swizzle("xy")).to_register()
 
     my_pos.x = temp_var.x - buff.shape.x / 2
     my_pos.y = temp_var.y - buff.shape.y / 2
-
-    #p2 = my_pos.swizzle("xy")
-    #p2 -= buff.shape.swizzle("xy") / 2
 
     # rotate the position to 3D template space
     my_pos[:] = rotation * my_pos
@@ -62,9 +56,6 @@ def template_slice(buff: vc.Buff[vc.c64], img: vc.Img3[vc.f32], img_shape: vc.Co
     my_pos.x += img_shape.x / 2
     my_pos.y += img_shape.y / 2
     my_pos.z += img_shape.z / 2
-
-    #p3 = my_pos.swizzle("xyz")
-    #p3 += img_shape.swizzle("xyz").to_dtype(vc.v3) / 2
 
     # sample the 3D image at the current position
     buff[ind] = img.sample(my_pos.swizzle("xyz")).swizzle("xy").to_dtype(vc.c64)
