@@ -297,7 +297,7 @@ class TemplateAtomic(Template):
 
         self.shape = (shape[0], shape[1])
         self.atomic_coords = atomic_coords.astype(np.float32)
-        self.atomic_coords_buffer = vd.asbuffer(atomic_coords)
+        self.atomic_coords_buffer = vd.asbuffer(self.atomic_coords)
 
     def _make_template(self,
                       rotations: vc.Var[vc.m4],
