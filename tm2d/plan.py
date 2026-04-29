@@ -22,6 +22,7 @@ class Plan:
 
     _status_bar: Optional[tqdm.tqdm]
     _rotations_array: Optional[np.ndarray]
+    _rotation_weight_array: Optional[np.ndarray]
     _pixel_sizes_array: Optional[np.ndarray]
     _ctf_index_arrays: Optional[np.ndarray]
     _index_arrays: Optional[np.ndarray]
@@ -51,6 +52,7 @@ class Plan:
 
         self._status_bar = None
         self._rotations_array = None
+        self._rotation_weight_array = None
         self._pixel_sizes_array = None
         self._ctf_index_arrays = None
         self._index_arrays = None
@@ -71,6 +73,7 @@ class Plan:
 
         self.results.check_comparison(
             self.comparison_buffer,
+            self.cmd_graph.bind_var("rotation_weight") if self.enable_rotation_weights else 1,
             *[self.cmd_graph.bind_var(f"index{i}") for i in range(self.template_batch_size)]
         )
 
@@ -101,6 +104,18 @@ class Plan:
                 self.cmd_graph.set_var(
                     "rotation_matrix",
                     self.template.get_rotation_matricies(self._rotations_array[:full_batch_size, :])
+                )
+
+            if params.rotations_weights is not None:
+                self._rotation_weight_array[:actual_rotation_batch_size * repeats] = np.repeat(
+                    params.rotations_weights[rotation_index:rotation_index + actual_rotation_batch_size],
+                    repeats=repeats,
+                    axis=0
+                )
+
+                self.cmd_graph.set_var(
+                    "rotation_weight",
+                    self._rotation_weight_array[:full_batch_size]
                 )
 
             rotation_offset = params.get_ctf_count() * params.get_pixel_size_count() * rotation_index
@@ -215,7 +230,11 @@ class Plan:
             enable_progress_bar: bool = False,
             batch_size: int = 32):
 
+        if params.rotations_weights is None and self.enable_rotation_weights:
+            raise ValueError("enable_rotation_weights is True, but no rotation weights provided in params.")
+
         self._rotations_array = np.zeros(shape=(batch_size, 3), dtype=np.float32)
+        self._rotation_weight_array = np.zeros(shape=(batch_size,), dtype=np.float32) if self.enable_rotation_weights else None
         self._pixel_sizes_array = np.zeros(shape=(batch_size,), dtype=np.float32)
         self._ctf_index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
         self._index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
@@ -235,31 +254,8 @@ class Plan:
             self._status_bar = None
 
         self._rotations_array = None
+        self._rotation_weight_array = None
         self._pixel_sizes_array = None
         self._ctf_index_arrays = None
         self._index_arrays = None
 
-    # def make_param_set(self,
-    #                     rotations: Optional[np.ndarray] = None,
-    #                     rotations_weights: Optional[np.ndarray] = None,
-    #                     pixel_sizes: Optional[np.ndarray] = None,
-    #                     **kwargs) -> ParamSet:
-    #     if rotations is None:
-    #         assert self.rotation is not None, "If rotations are not provided, the rotation attribute must be set."
-    #     else:
-    #         assert self.rotation is None, "If rotations are provided, the rotation attribute must not be set."
-
-    #     if pixel_sizes is None:
-    #         assert self.pixel_size is not None, "If pixel sizes are not provided, the pixel_size attribute must be set."
-    #     else:
-    #         assert self.pixel_size is None, "If pixel sizes are provided, the pixel_size attribute must not be set."
-
-    #     """
-    #     Create a ParamSet with the given rotations, pixel sizes, and CTF parameters.
-    #     """
-    #     return ParamSet.from_params(
-    #         rotations=rotations,
-    #         rotations_weights=rotations_weights,
-    #         pixel_sizes=pixel_sizes,
-    #         ctf_set=self.ctf_params.make_ctf_set(**kwargs)
-    #     )
