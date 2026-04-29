@@ -30,6 +30,7 @@ def accumulate(
         cross_correlation: vc.Buff[vc.f32],
         cross_corr_index: vc.Var[vc.i32],
         micrograph_span_rfft: int,
+        rotation_weights: vc.Var[vc.f32],
         *index_values: vc.Var[vc.i32]):
 
     mip = vc.new_float_register(0, var_name="mip")
@@ -47,8 +48,8 @@ def accumulate(
         with vc.if_block(index_values[i] >= 0):
             mip[:] = cross_correlation[cross_corr_index]
 
-            sum_cross[:] = double_precision_add_f32(sum_cross, mip)
-            sum2_cross[:] = double_precision_add_f32(sum2_cross, mip * mip)
+            sum_cross[:] = double_precision_add_f32(sum_cross, mip * rotation_weights)
+            sum2_cross[:] = double_precision_add_f32(sum2_cross, mip * mip * rotation_weights)
 
             with vc.if_block(mip > best_mip):
                 best_mip[:] = mip
@@ -150,11 +151,13 @@ class ResultsPixel(Results):
         assert self.compiled, "Results must be compiled before accessing the templates count."
         return self.templates_count
 
-    def check_comparison(self, comparison_buffer: vd.Buffer, *indicies: vc.Var[vc.i32]):
+    def check_comparison(self, comparison_buffer: vd.Buffer, rotation_weights: vc.Var[vc.f32], *indicies: vc.Var[vc.i32]):
         assert comparison_buffer.shape[0] % self.max_cross.shape[0] == 0, "Comparison buffer size must be a multiple of the number of templates."
 
         template_count = comparison_buffer.shape[0] // self.max_cross.shape[0]
         template_offset = self.max_cross.shape[1] * (self.max_cross.shape[2] + 2) * template_count
+
+        rotation_weights_type = vc.Const[vc.f32] if isinstance(rotation_weights, int) else vc.Var[vc.f32]
 
         @vd.shader(
                 exec_size=self.max_cross.size,
@@ -164,12 +167,14 @@ class ResultsPixel(Results):
                     vc.Buff[vc.v2],   # sum_cross
                     vc.Buff[vc.v2],   # sum2_cross
                     vc.Buff[vc.f32],  # cross_correlation
+                    rotation_weights_type,  # rotation_weights
                 ] + [vc.Var[vc.i32]] * len(indicies))
         def update_max(max_cross: vc.Buff[vc.f32],
                        best_index: vc.Buff[vc.i32],
                        sum_cross: vc.Buff[vc.v2],
                        sum2_cross: vc.Buff[vc.v2],
                        cross_correlation: vc.Buff[vc.f32],
+                       rot_weights: vc.Var[vc.f32],
                        *index_values: vc.Var[vc.i32]):
             ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
 
@@ -187,6 +192,7 @@ class ResultsPixel(Results):
                 cross_correlation,
                 cross_corr_index,
                 micrograph_span_rfft,
+                rot_weights,
                 *index_values
             )
 
@@ -203,6 +209,7 @@ class ResultsPixel(Results):
             self.sum_cross,
             self.sum2_cross,
             comparison_buffer,
+            rotation_weights,
             *indicies
         )
 

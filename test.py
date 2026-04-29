@@ -16,12 +16,12 @@ ctf_params = tm2d.CTFParams.like_krios(
 pixel_sizes = np.arange(1.04, 1.08, 0.0004)
 B_factors = np.arange(0, 250, 2.5)
 
-params = tm2d.ParamSet.from_params(
-    rotations=np.array([[188.84183,  78.82107, 326]]),
-    pixel_sizes=pixel_sizes,
+params = tm2d.make_param_set(
     ctf_set=ctf_params.make_ctf_set(
         B = B_factors
-    )
+    ),
+    rotations=np.array([[188.84183,  78.82107, 326]]),
+    pixel_sizes=pixel_sizes,
 )
 
 # A copy of the data folder can be found at:

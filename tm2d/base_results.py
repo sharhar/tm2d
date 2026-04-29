@@ -5,7 +5,7 @@ class Results:
     def __init__(self):
         raise NotImplementedError("Results is an abstract class. Please implement it in a subclass.")
 
-    def check_comparison(self, comparison_buffer: vd.RFFTBuffer, *indicies: vc.Var[vc.i32]):
+    def check_comparison(self, comparison_buffer: vd.RFFTBuffer, rotation_weights: vc.Var[vc.f32], *indicies: vc.Var[vc.i32]):
         raise NotImplementedError("check_comparison must be implemented in a subclass.")
 
     def reset(self):

@@ -48,7 +48,8 @@ class ResultsParam(Results):
             (np.ones(shape=self.best_mip_values_buffer.shape) * -1000000).astype(np.float32)
         )
 
-    def check_comparison(self, comparison_buffer: vd.RFFTBuffer, *indicies: vc.Var[vc.i32]):
+    def check_comparison(self, comparison_buffer: vd.RFFTBuffer, rotation_weights: vc.Var[vc.f32], *indicies: vc.Var[vc.i32]):
+
         template_count = comparison_buffer.shape[0] // self.best_values_buffer.shape[0]
 
         assert comparison_buffer.shape[0] % self.best_values_buffer.shape[0] == 0, \
@@ -59,19 +60,25 @@ class ResultsParam(Results):
 
         pixel_count = comparison_buffer.shape[1] * (comparison_buffer.shape[2] - 1) * 2
 
+        rotation_weights_type = vc.Const[vc.f32] if isinstance(rotation_weights, int) else vc.Var[vc.f32]
+
         @vd.shader(
             exec_size=self.best_values_buffer.shape[0],
             arg_type_annotations=[
                 vc.Buff[vc.f32],  # zscore_buff
                 vc.Buff[vc.f32],  # mip_buff
                 vc.Buff[vc.v3],  # reduced_values_buff
+                rotation_weights_type,  # rotation_weights
             ] + [vc.Var[vc.i32]] * len(indicies)
         )
         def update_best_value(
             zscore_buff: vc.Buff[vc.f32],
             mip_buff: vc.Buff[vc.f32],
             reduced_values_buff: vc.Buff[vc.v3],
+            rot_weights: vc.Var[vc.f32],
             *indicies: vc.Var[vc.i32]):
+            _ = rot_weights
+
             ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
 
             reduced_values = vc.new_vec3_register()
@@ -97,6 +104,7 @@ class ResultsParam(Results):
             self.best_values_buffer,
             self.best_mip_values_buffer,
             reduced_values_buff,
+            rotation_weights,
             *indicies
         )
 

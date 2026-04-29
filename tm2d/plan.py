@@ -18,6 +18,7 @@ class Plan:
     pixel_size: Optional[float]
     ctf_params: CTFParams
     template_batch_size: int
+    enable_rotation_weights: bool
 
     _status_bar: Optional[tqdm.tqdm]
     _rotations_array: Optional[np.ndarray]
@@ -32,7 +33,8 @@ class Plan:
                  rotation: Optional[np.ndarray] = None,
                  pixel_size: Optional[float] = None,
                  ctf_params: Optional[CTFParams] = None,
-                 template_batch_size: int = 2):
+                 template_batch_size: int = 2,
+                 enable_rotation_weights: bool = False):
 
         self.template_batch_size = template_batch_size
 
@@ -45,6 +47,7 @@ class Plan:
         self.rotation = rotation
         self.pixel_size = pixel_size
         self.ctf_params = ctf_params
+        self.enable_rotation_weights = enable_rotation_weights
 
         self._status_bar = None
         self._rotations_array = None
@@ -236,25 +239,27 @@ class Plan:
         self._ctf_index_arrays = None
         self._index_arrays = None
 
-    def make_param_set(self,
-                        rotations: Optional[np.ndarray] = None,
-                        pixel_sizes: Optional[np.ndarray] = None,
-                        **kwargs) -> ParamSet:
-        if rotations is None:
-            assert self.rotation is not None, "If rotations are not provided, the rotation attribute must be set."
-        else:
-            assert self.rotation is None, "If rotations are provided, the rotation attribute must not be set."
+    # def make_param_set(self,
+    #                     rotations: Optional[np.ndarray] = None,
+    #                     rotations_weights: Optional[np.ndarray] = None,
+    #                     pixel_sizes: Optional[np.ndarray] = None,
+    #                     **kwargs) -> ParamSet:
+    #     if rotations is None:
+    #         assert self.rotation is not None, "If rotations are not provided, the rotation attribute must be set."
+    #     else:
+    #         assert self.rotation is None, "If rotations are provided, the rotation attribute must not be set."
 
-        if pixel_sizes is None:
-            assert self.pixel_size is not None, "If pixel sizes are not provided, the pixel_size attribute must be set."
-        else:
-            assert self.pixel_size is None, "If pixel sizes are provided, the pixel_size attribute must not be set."
+    #     if pixel_sizes is None:
+    #         assert self.pixel_size is not None, "If pixel sizes are not provided, the pixel_size attribute must be set."
+    #     else:
+    #         assert self.pixel_size is None, "If pixel sizes are provided, the pixel_size attribute must not be set."
 
-        """
-        Create a ParamSet with the given rotations, pixel sizes, and CTF parameters.
-        """
-        return ParamSet.from_params(
-            rotations=rotations,
-            pixel_sizes=pixel_sizes,
-            ctf_set=self.ctf_params.make_ctf_set(**kwargs)
-        )
+    #     """
+    #     Create a ParamSet with the given rotations, pixel sizes, and CTF parameters.
+    #     """
+    #     return ParamSet.from_params(
+    #         rotations=rotations,
+    #         rotations_weights=rotations_weights,
+    #         pixel_sizes=pixel_sizes,
+    #         ctf_set=self.ctf_params.make_ctf_set(**kwargs)
+    #     )

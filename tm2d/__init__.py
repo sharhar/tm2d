@@ -10,9 +10,11 @@ from .comparators.cross_correlation import ComparatorCrossCorrelation
 from .results.per_pixel import ResultsPixel
 from .results.per_param import ResultsParam
 
-from .plan import Plan, Template, Comparator, Results, ParamSet
+from .param_set import ParamSet, make_param_set
 
-__all__ = [
+from .plan import Plan, Template, Comparator, Results
+
+__all__ = (
     "CTFParams",
     "CTFSet",
     "ctf_filter",
@@ -26,4 +28,5 @@ __all__ = [
     "Comparator",
     "Results",
     "ParamSet",
-]
+    "make_param_set",
+)

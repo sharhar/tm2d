@@ -1,28 +1,15 @@
 import numpy as np
+import dataclasses
 from typing import Optional
 
 from .ctf.ctf_set import CTFSet
 
+@dataclasses.dataclass
 class ParamSet:
-    rotations: Optional[np.ndarray] = None
-    pixel_sizes: Optional[np.ndarray] = None
+    rotations: Optional[np.ndarray]
+    rotations_weights: Optional[np.ndarray]
+    pixel_sizes: Optional[np.ndarray]
     ctf_set: CTFSet
-
-    def __init__(self):
-        raise TypeError("CTFSet is not meant to be instantiated directly. Use CTFParams.make_ctf_set() instead.")
-
-    @classmethod
-    def from_params(cls,
-                    rotations: np.ndarray,
-                    pixel_sizes: np.ndarray,
-                    ctf_set: CTFSet) -> 'ParamSet':
-        instance = cls.__new__(cls)
-
-        instance.rotations = rotations
-        instance.pixel_sizes = pixel_sizes
-        instance.ctf_set = ctf_set
-
-        return instance
 
     def get_rotation_count(self) -> int:
         if self.rotations is None:
@@ -133,3 +120,23 @@ class ParamSet:
             axis_names_dict["pixel_size"] = 2
 
         return values_tensor.reshape(tensor_shape), axis_names_dict
+
+def make_param_set(ctf_set: CTFSet,
+                    rotations: Optional[np.ndarray] = None,
+                    rotations_weights: Optional[np.ndarray] = None,
+                    pixel_sizes: Optional[np.ndarray] = None) -> 'ParamSet':
+
+    if rotations is not None and rotations_weights is not None:
+        if rotations.shape[0] != rotations_weights.shape[0]:
+            raise ValueError("Rotations and rotations_weights must have the same number of entries.")
+    elif rotations is not None:
+        rotations_weights = np.ones(rotations.shape[0], dtype=np.float32)
+    elif rotations_weights is not None:
+        raise ValueError("rotations_weights cannot be provided without rotations.")
+
+    return ParamSet(
+        rotations=rotations,
+        rotations_weights=rotations_weights,
+        pixel_sizes=pixel_sizes,
+        ctf_set=ctf_set
+    )
