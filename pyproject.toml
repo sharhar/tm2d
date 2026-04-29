@@ -8,7 +8,7 @@ version = "0.2.0"
 authors = [
   { name="Shahar Sandhaus", email="shahar.sandhaus@berkeley.edu" },
 ]
-description = "A Python module for orchestrating and dispatching large computations across multi-GPU systems using Vulkan."
+description = "A Python module for 2D template matching"
 readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
@@ -33,7 +33,5 @@ packages = [
     "tm2d.templates",
     "tm2d.comparators",
     "tm2d.results",
+    "tm2d.ctf"
 ]
-
-[project.optional-dependencies]
-healpy = ["healpy"]
