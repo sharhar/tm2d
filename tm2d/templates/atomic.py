@@ -198,6 +198,23 @@ def map_int_to_float(buff: Buff[f32], sigma_e: vc.Const[vc.f32]):
     read_op.register.real = value
     read_op.register.imag = 0.0
 
+@vd.shader(exec_size=lambda args: args.buff.shape[0] * args.buff.shape[1] * (args.buff.shape[2] * 2 - 2))
+def reinterpret_int_bits_to_float(buff: Buff[f32]):
+    tid = vc.global_invocation_id().x.to_dtype(vd.int32).to_register()
+
+    width = (buff.shape[2] * 2 - 2).to_dtype(vd.int32).to_register()
+    row_stride = (buff.shape[2] * 2).to_dtype(vd.int32).to_register()
+    plane_stride = (buff.shape[1] * row_stride).to_dtype(vd.int32).to_register()
+
+    y = (tid % width).to_register()
+    row_linear = (tid // width).to_register()
+    x = (row_linear % buff.shape[1].to_dtype(vd.int32)).to_register()
+    k = (row_linear // buff.shape[1].to_dtype(vd.int32)).to_register()
+
+    # project_atoms writes counts into the real-layout rows of RFFT storage.
+    index = (k * plane_stride + x * row_stride + y).to_register()
+    buff[index] = vc.float_bits_to_int(buff[index]).to_dtype(vd.float32)
+
 def fused_strided_convolution(
         template_buffer: vd.Buffer,
         pixel_size,
@@ -241,7 +258,7 @@ def fused_strided_convolution(
         )
     )
 
-def seperate_strided_convolution(template_buffer: vd.Buffer, pixel_size, ctf_params: CTFParams, template_count, ctf_args, disable_ctf):
+def separate_strided_convolution(template_buffer: vd.Buffer, pixel_size, ctf_params: CTFParams, template_count, ctf_args, disable_ctf):
     vd.fft.fft(template_buffer, axis=1, buffer_shape=(1, *template_buffer.shape[1:]))
 
     @vd.shader(
@@ -272,7 +289,7 @@ def seperate_strided_convolution(template_buffer: vd.Buffer, pixel_size, ctf_par
 
     convolution_shader(template_buffer, pixel_size, *ctf_args)
 
-    vd.fft.ifft(template_buffer, axis=1)
+    vd.fft.ifft(template_buffer, axis=1, normalize=False)
 
 class TemplateAtomic(Template):
     shape: Tuple[int, int]
@@ -281,19 +298,22 @@ class TemplateAtomic(Template):
     disable_ctf: bool
     disable_sigma_e: bool
     fuse_ctf_convolution: bool
+    count_atoms: bool
 
     def __init__(self,
                  shape: Tuple[int, int],
                  atomic_coords: np.ndarray,
-                 disable_ctf: bool = False,
-                 disable_sigma_e: bool = False,
-                 fuse_ctf_convolution: bool = False):
+                 disable_ctf: bool = False, # True disables ctf (still applies gaussian filter)
+                 disable_sigma_e: bool = False, # True skips scaling by sigma_e, keeping [V] instead of [rad]
+                 fuse_ctf_convolution: bool = False, # True fuses convolution
+                 count_atoms: bool = False): # True ONLY counts atoms
         assert len(shape) == 2, "Shape must be a tuple of two integers (height, width)."
         assert atomic_coords.ndim == 2 and atomic_coords.shape[1] == 3, "Atomic coordinates must be a 2D array with shape (N, 3)."
 
         self.disable_ctf = disable_ctf
         self.disable_sigma_e = disable_sigma_e
         self.fuse_ctf_convolution = fuse_ctf_convolution
+        self.count_atoms = count_atoms
 
         self.shape = (shape[0], shape[1])
         self.atomic_coords = atomic_coords.astype(np.float32)
@@ -311,6 +331,10 @@ class TemplateAtomic(Template):
         fill_buffer(template_buffer)
         project_atoms(template_buffer, self.atomic_coords_buffer, rotations, pixel_size)
 
+        if self.count_atoms:
+            reinterpret_int_bits_to_float(template_buffer)
+            return template_buffer
+
         vd.fft.fft(
             template_buffer,
             template_buffer,
@@ -325,7 +349,7 @@ class TemplateAtomic(Template):
         if self.fuse_ctf_convolution:
             fused_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, self.disable_ctf)
         else:
-            seperate_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, self.disable_ctf)
+            separate_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, self.disable_ctf)
 
         vd.fft.irfft(template_buffer, normalize=False)
 
