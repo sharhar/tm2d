@@ -7,7 +7,7 @@ import tm2d_utils as tu
 
 from matplotlib import pyplot as plt
 
-ctf_params = tm2d.CTFParams.like_krios(
+ctf_params = tu.ctf_like_krios(
     defocus = 12890,
     B = None,
     Cs = 2.7e7
