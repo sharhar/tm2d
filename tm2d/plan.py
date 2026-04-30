@@ -106,7 +106,7 @@ class Plan:
                     self.template.get_rotation_matricies(self._rotations_array[:full_batch_size, :])
                 )
 
-            if params.rotations_weights is not None:
+            if self.enable_rotation_weights:
                 self._rotation_weight_array[:actual_rotation_batch_size * repeats] = np.repeat(
                     params.rotations_weights[rotation_index:rotation_index + actual_rotation_batch_size],
                     repeats=repeats,

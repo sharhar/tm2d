@@ -21,6 +21,7 @@ params = tm2d.make_param_set(
         B = B_factors
     ),
     rotations=np.array([[188.84183,  78.82107, 326]]),
+    #rotations_weights=np.array([1.0]),
     pixel_sizes=pixel_sizes,
 )
 
@@ -51,8 +52,8 @@ comparator = tm2d.ComparatorCrossCorrelation(
     template_obj.get_shape()
 )
 
-#results = tm2d.ResultsPixel(data_array.shape)
-results = tm2d.ResultsParam(data_array.shape[0], params.get_total_count())
+results = tm2d.ResultsPixel(data_array.shape)
+#results = tm2d.ResultsParam(data_array.shape[0], params.get_total_count())
 
 plan = tm2d.Plan(
     template_obj,
@@ -60,11 +61,40 @@ plan = tm2d.Plan(
     results,
     ctf_params=ctf_params,
     template_batch_size=4,
+    enable_rotation_weights=True
 )
 
 plan.set_data(data_array)
 
 plan.run(params, enable_progress_bar=True)
+
+output_dir = "."
+
+for i in range(results.micrograph_count):
+    np.save(f"{output_dir}/template{i}.npy", plan.template_buffer.read_real(0)[i])
+    np.save(f"{output_dir}/comparison{i}.npy", plan.comparison_buffer.read_real(0)[i])
+
+    np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
+
+    z_score = tu.get_pixel_z_scores(results)[i]
+
+    np.save(f"{output_dir}/Z_score{i}.npy", z_score)
+
+    match_locations, match_indicies = tu.get_locations_and_indicies_of_best_match(results)
+
+    best_indicies = results.get_best_index_array()[i]
+
+    print(f"Micrograph {i}:")
+    print(f"\tMax cross-correlation: {results.get_mip()[i][match_locations[i]]}")
+    print(f"\tBest Z-score: {z_score[match_locations[i]]}")
+
+    for param_name, param_value in params.get_values_at_index(match_indicies[i]).items():
+        print(f"\tBest {param_name}: {param_value}")
+
+    for param_name, param_values in params.get_values_at_index(best_indicies).items():
+        np.save(f"{output_dir}/{param_name}_{i}.npy", param_values)
+
+exit()
 
 zscore_list = results.get_zscore_list(params)
 mip_list = results.get_mip_list(params)
@@ -117,28 +147,7 @@ print(values[1])
 
 print(params.get_tensor_axes_names())
 
-# for i in range(results.micrograph_count):
-#     np.save(f"{output_dir}/template{i}.npy", plan.template_buffer.read_real(0)[i])
-#     np.save(f"{output_dir}/comparison{i}.npy", plan.comparison_buffer.read_real(0)[i])
 
-#     np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
-
-#     z_score = tu.get_pixel_z_scores(results)[i]
-
-#     np.save(f"{output_dir}/Z_score{i}.npy", z_score)
-
-#     match_locations, match_indicies = tu.get_locations_and_indicies_of_best_match(results)
-
-#     best_indicies = results.get_best_index_array()[i]
-
-#     print(f"Micrograph {i}:")
-#     print(f"\tMax cross-correlation: {results.get_mip()[i][match_locations[i]]}")
-
-#     for param_name, param_value in params.get_values_at_index(match_indicies[i]).items():
-#         print(f"\tBest {param_name}: {param_value}")
-
-#     for param_name, param_values in params.get_values_at_index(best_indicies).items():
-#         np.save(f"{output_dir}/{param_name}_{i}.npy", param_values)
 
 """
 
