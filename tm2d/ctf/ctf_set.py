@@ -1,25 +1,42 @@
 import dataclasses
 import numpy as np
 import vkdispatch as vd
+import itertools
+
+from .ctf_params import CTFParams
 
 @dataclasses.dataclass
 class CTFSet:
+    ctf_params: CTFParams
     combinations_array: np.ndarray
     field_names: list[str]
     lengths: list[int]
 
-    def __init__(self):
-        raise TypeError("CTFSet is not meant to be instantiated directly. Use CTFParams.make_ctf_set() instead.")
+    def __init__(self,
+                 ctf_params: CTFParams,
+                 **values_dict):
 
-    @classmethod
-    def from_compiled_params(cls, combinations_array: np.ndarray, field_names: list[str], lengths: list[int]):
-        instance = cls.__new__(cls)
+        self.ctf_params = ctf_params
 
-        instance.combinations_array = combinations_array
-        instance.field_names = field_names
-        instance.lengths = lengths
+        fields = dataclasses.fields(ctf_params)
 
-        return instance
+        dynamic_fields = [field for field in fields if ctf_params.__getattribute__(field.name) is None]
+
+        dynamic_field_names = {field.name for field in dynamic_fields}
+        values_dict_keys = set(values_dict.keys())
+        if dynamic_field_names != values_dict_keys:
+            raise ValueError(f"Dynamic field names {dynamic_field_names} do not match keys in values_dict {values_dict_keys}")
+
+        dynamic_values = [values_dict[field.name] for field in dynamic_fields]
+
+        for dyn_val, field in zip(dynamic_values, dynamic_fields):
+            assert dyn_val.ndim == 1, f"Dynamic value for field {field.name} must be a 1D array, got {dyn_val.ndim}D array."
+
+        combinations = list(itertools.product(*dynamic_values))
+
+        self.combinations_array = np.array(combinations)
+        self.field_names = [field.name for field in dynamic_fields]
+        self.lengths = [len(values_dict[field.name]) for field in dynamic_fields]
 
     def get_length(self):
         return self.combinations_array.shape[0]
@@ -62,3 +79,6 @@ class CTFSet:
             return_dict[field_name] = self.combinations_array[index, i]
 
         return return_dict
+
+def make_ctf_set(ctf_params: CTFParams, **values_dict) -> CTFSet:
+    return CTFSet(ctf_params, **values_dict)

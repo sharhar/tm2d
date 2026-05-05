@@ -7,17 +7,16 @@ import tm2d_utils as tu
 
 from matplotlib import pyplot as plt
 
-ctf_params = tu.ctf_like_krios(
-    defocus = 12890,
-    B = None,
-    Cs = 2.7e7
-)
-
 pixel_sizes = np.arange(1.04, 1.08, 0.0004)
 B_factors = np.arange(0, 250, 2.5)
 
 params = tm2d.make_param_set(
-    ctf_set=ctf_params.make_ctf_set(
+    tm2d.make_ctf_set(
+        tu.ctf_like_krios(
+            defocus = 12890,
+            B = None,
+            Cs = 2.7e7
+        ),
         B = B_factors
     ),
     rotations=np.array([[188.84183,  78.82107, 326]]),
@@ -59,7 +58,7 @@ plan = tm2d.Plan(
     template_obj,
     comparator,
     results,
-    ctf_params=ctf_params,
+    ctf_params=params.ctf_set.ctf_params,
     template_batch_size=4,
     #enable_rotation_weights=True
 )

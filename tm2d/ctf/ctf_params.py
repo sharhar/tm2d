@@ -1,7 +1,5 @@
 import dataclasses
 import numpy as np
-import itertools
-from .ctf_set import CTFSet
 
 import vkdispatch as vd
 import vkdispatch.codegen as vc
@@ -291,30 +289,6 @@ class CTFParams:
             result.append(CTFParams.from_arg_list(*static_values))
 
         return result
-
-    def make_ctf_set(self, **values_dict) -> CTFSet:
-        fields = dataclasses.fields(self)
-
-        dynamic_fields = [field for field in fields if self.__getattribute__(field.name) is None]
-
-        dynamic_field_names = {field.name for field in dynamic_fields}
-        values_dict_keys = set(values_dict.keys())
-        if dynamic_field_names != values_dict_keys:
-            raise ValueError(f"Dynamic field names {dynamic_field_names} do not match keys in values_dict {values_dict_keys}")
-
-        dynamic_values = [values_dict[field.name] for field in dynamic_fields]
-
-        for dyn_val, field in zip(dynamic_values, dynamic_fields):
-            assert dyn_val.ndim == 1, f"Dynamic value for field {field.name} must be a 1D array, got {dyn_val.ndim}D array."
-
-        combinations = list(itertools.product(*dynamic_values))
-        combinations_array = np.array(combinations)
-
-        return CTFSet.from_compiled_params(
-            combinations_array=combinations_array,
-            field_names=[field.name for field in dynamic_fields],
-            lengths=[len(values_dict[field.name]) for field in dynamic_fields]
-        )
 
     def print(self):
         fields = dataclasses.fields(self)

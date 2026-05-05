@@ -1,5 +1,5 @@
 from .ctf.ctf_params import CTFParams
-from .ctf.ctf_set import CTFSet
+from .ctf.ctf_set import CTFSet, make_ctf_set
 from .ctf.ctf import ctf_filter, apply_ctfs_to_rfft_signals
 
 from .templates.atomic import TemplateAtomic
@@ -17,6 +17,7 @@ from .plan import Plan, Template, Comparator, Results
 __all__ = [
     "CTFParams",
     "CTFSet",
+    "make_ctf_set",
     "ctf_filter",
     "apply_ctfs_to_rfft_signals"
     "TemplateAtomic",
