@@ -242,7 +242,7 @@ class TemplateDensity(Template):
         )
 
 
-        vd.fft.irfft2(template_buffer_temp, normalize=False)
+        vd.fft.irfft2(template_buffer_temp, normalize=True)
 
         template_buffer = vd.RFFTBuffer((template_count, *self.shape))
 
