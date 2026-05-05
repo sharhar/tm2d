@@ -60,7 +60,6 @@ def _zernike_cart(m: int, n: int, r: vc.ShaderVariable, th: vc.ShaderVariable) -
         return R * vc.cos(m * th)
     return R * vc.sin(abs(m) * th)
 
-
 def phase_from_even_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff: vc.ShaderVariable) -> vc.ShaderVariable:
     psi = vc.new_float_register()
     r = vc.sqrt(Sx_eff * Sx_eff + Sy_eff * Sy_eff).to_register()
@@ -173,3 +172,36 @@ def ctf_filter(
         CTF.imag = 0.0
 
     return CTF
+
+def apply_ctfs_to_rfft_signals(
+        input_value: vc.ShaderVariable,
+        registers: list[vc.ShaderVariable],
+        indicies: list[int],
+        ind: vc.ShaderVariable,
+        signal_shape: tuple[int, int, int],
+        pix_size: vc.ShaderVariable,
+        ctf_params: CTFParams,
+        args: list[vc.ShaderVariable],
+):
+    iind = ind.to_dtype(vc.i32)
+
+    ipos_2d = vc.new_ivec2_register()
+    ipos_2d.x = iind % signal_shape[2]
+    ipos_2d.y = ((iind // signal_shape[2]) + signal_shape[1] // 2) % signal_shape[1]
+
+    pos_2d = ipos_2d.to_dtype(vc.v2).to_register()
+    pos_2d.y = pos_2d.y - signal_shape[1] // 2
+
+
+
+    ctf_param_list = ctf_params.assemble_params_list_from_args(args, signal_shape[0])
+
+    for i in range(len(registers)):
+        #index = ind + i * signal_shape[1] * signal_shape[2]
+
+        registers[i][:] = vc.mult_complex(input_value, ctf_filter(
+            signal_shape[1:],
+            pos_2d,
+            ctf_param_list[indicies[i]],
+            pix_size
+        ))

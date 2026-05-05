@@ -61,7 +61,7 @@ plan = tm2d.Plan(
     results,
     ctf_params=ctf_params,
     template_batch_size=4,
-    enable_rotation_weights=True
+    #enable_rotation_weights=True
 )
 
 plan.set_data(data_array)

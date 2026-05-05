@@ -129,8 +129,6 @@ def make_param_set(ctf_set: CTFSet,
     if rotations is not None and rotations_weights is not None:
         if rotations.shape[0] != rotations_weights.shape[0]:
             raise ValueError("Rotations and rotations_weights must have the same number of entries.")
-    elif rotations is not None:
-        rotations_weights = np.ones(rotations.shape[0], dtype=np.float32)
     elif rotations_weights is not None:
         raise ValueError("rotations_weights cannot be provided without rotations.")
 

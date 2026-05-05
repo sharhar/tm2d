@@ -7,7 +7,7 @@ from typing import Tuple
 import numpy as np
 
 from ..plan import Template
-from ..ctf.ctf import CTFParams, ctf_filter
+from ..ctf.ctf import CTFParams, apply_ctfs_to_rfft_signals
 
 def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     in_matricies = np.zeros(shape=(4, 4, angles.shape[0]), dtype=np.float32)
@@ -96,23 +96,16 @@ def apply_ctf_params(ctf_params: CTFParams,
     if disable_ctf:
         return
 
-    upos_2d = vc.new_uvec2_register()
-    upos_2d.x = tid % template_shape[2]
-    upos_2d.y = ((tid // template_shape[2]) + template_shape[1] // 2) % template_shape[1]
-
-    pos_2d = upos_2d.to_dtype(vc.v2).to_register()
-    pos_2d.y = pos_2d.y - template_shape[1] // 2
-
-    ctf_param_list = ctf_params.assemble_params_list_from_args(in_args, template_shape[0])
-
-    ctf = ctf_filter(
-        template_shape[1:],
-        pos_2d,
-        ctf_param_list[ctf_index],
-        pixel_size
+    apply_ctfs_to_rfft_signals(
+        value,
+        [value], # registers to apply the ctf to
+        [ctf_index], # indicies for which ctf params to use for each register
+        tid,
+        template_shape,
+        pixel_size,
+        ctf_params,
+        in_args
     )
-
-    value[:] = vc.mult_complex(value, ctf)
 
 e_mass = 0.511e6 # electron mass [eV/c^2]
 e_compton = 2.42631023867e-2 # compton wavelength [A]

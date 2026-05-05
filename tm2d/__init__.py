@@ -1,6 +1,6 @@
 from .ctf.ctf_params import CTFParams
 from .ctf.ctf_set import CTFSet
-from .ctf.ctf import ctf_filter
+from .ctf.ctf import ctf_filter, apply_ctfs_to_rfft_signals
 
 from .templates.atomic import TemplateAtomic
 from .templates.density import TemplateDensity
@@ -14,10 +14,11 @@ from .param_set import ParamSet, make_param_set
 
 from .plan import Plan, Template, Comparator, Results
 
-__all__ = (
+__all__ = [
     "CTFParams",
     "CTFSet",
     "ctf_filter",
+    "apply_ctfs_to_rfft_signals"
     "TemplateAtomic",
     "TemplateDensity",
     "ComparatorCrossCorrelation",
@@ -29,4 +30,4 @@ __all__ = (
     "Results",
     "ParamSet",
     "make_param_set",
-)
+]

@@ -4,7 +4,7 @@ import vkdispatch.codegen as vc
 from typing import Tuple
 
 from ..plan import Template
-from ..ctf.ctf import CTFParams, ctf_filter
+from ..ctf.ctf import CTFParams, apply_ctfs_to_rfft_signals
 
 import numpy as np
 
@@ -152,26 +152,29 @@ def extract_fft_slices(
 
         value = img.sample(my_pos.swizzle("xyz")).swizzle("xy").to_dtype(vc.c64).to_register()
 
-        ipos_2d = vc.new_ivec2_register()
-        ipos_2d.x = ind % template_buffer.shape[2]
-        ipos_2d.y = ((ind // template_buffer.shape[2]) + template_buffer.shape[1] // 2) % template_buffer.shape[1]
-
-        pos_2d = ipos_2d.to_dtype(vc.v2).to_register()
-        pos_2d.y = pos_2d.y - template_buffer.shape[1] // 2
-
-        ctf_param_list = ctf_params.assemble_params_list_from_args(in_args, template_buffer.shape[0])
-
-        for i in range(template_buffer.shape[0]):
-            index = ind + i * template_buffer.shape[1] * template_buffer.shape[2]
-            if disable_ctf:
+        if disable_ctf:
+            for i in range(template_buffer.shape[0]):
+                index = ind + i * template_buffer.shape[1] * template_buffer.shape[2]
                 buff[index] = value
-            else:
-                buff[index] = vc.mult_complex(value, ctf_filter(
-                    template_buffer.shape[1:],
-                    pos_2d,
-                    ctf_param_list[i],
-                    pix_size
-                ))
+
+            return
+
+        template_area = template_buffer.shape[1] * template_buffer.shape[2]
+
+        out_values = [
+            buff[ind + i * template_area] for i in range(template_buffer.shape[0])
+        ]
+
+        apply_ctfs_to_rfft_signals(
+            value,
+            out_values,
+            [i for i in range(template_buffer.shape[0])],
+            ind,
+            template_buffer.shape,
+            pix_size,
+            ctf_params,
+            in_args
+        )
 
     extract_fft_slices_shader(
         template_buffer,
