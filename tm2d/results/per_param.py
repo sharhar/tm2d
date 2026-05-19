@@ -6,8 +6,47 @@ import numpy as np
 from ..plan import Results, ParamSet
 
 @vd.map
+def reduction_map_radius(buf: vc.Buff[vc.c64], output_radius: vc.Const[vc.i32]) -> vc.v3:
+    ind = vd.reduce.mapped_io_index()
+
+    coord3d = vc.ravel_index(ind, buf.shape).to_register()
+
+    result = vc.new_vec3_register(0, 0, 0)
+
+    within_y_range = vc.any(
+        coord3d.y < output_radius,
+        coord3d.y >= buf.shape.y - output_radius
+    )
+
+    within_z_range = vc.any(
+        coord3d.z < output_radius // 2,
+        vc.all(
+            coord3d.z >= buf.shape.z - output_radius // 2 - 1,
+            coord3d.z < buf.shape.z - 1
+        )
+    )
+
+    with vc.if_block(vc.all(within_y_range, within_z_range)):
+        val = buf[ind].to_register()
+
+        result.x = vc.max(val.real, val.imag)
+        result.y = val.real + val.imag
+        result.z = val.real * val.real + val.imag * val.imag
+
+    return result
+
+@vd.reduce.reduce(0, axes=[1, 2], mapping_function=reduction_map_radius)
+def calculate_sums_and_max_radius(a: vc.Const[vc.v3], b: vc.Const[vc.v3]) -> vc.v3:
+    return vc.new_vec3_register(
+        vc.max(a.x, b.x),
+        a.y + b.y,
+        a.z + b.z
+    )
+
+@vd.map
 def reduction_map(buf: vc.Buff[vc.c64]) -> vc.v3:
     ind = vd.reduce.mapped_io_index()
+
     result = vc.new_vec3_register(0, 0, 0)
 
     with vc.if_block(ind % buf.shape.z < buf.shape.z - 1):
@@ -27,16 +66,19 @@ def calculate_sums_and_max(a: vc.Const[vc.v3], b: vc.Const[vc.v3]) -> vc.v3:
         a.z + b.z
     )
 
+
 class ResultsParam(Results):
     best_values_buffer: vd.Buffer
     best_mip_values_buffer: vd.Buffer
     compiled: bool
     compiled_best_values: np.ndarray
     compiled_best_mip_values: np.ndarray
+    output_radius: int
 
-    def __init__(self, batch_count: int, total_indicies: int) -> None:
+    def __init__(self, batch_count: int, total_indicies: int, output_radius: int = None) -> None:
         self.best_values_buffer = vd.Buffer((batch_count, total_indicies, ), vd.float32)
         self.best_mip_values_buffer = vd.Buffer((batch_count, total_indicies, ), vd.float32)
+        self.output_radius = output_radius
         self.compiled = False
         self.reset()
 
@@ -98,7 +140,10 @@ class ResultsParam(Results):
                         zscore_buff[output_index] = z_score
                         mip_buff[output_index] = reduced_values.x
 
-        reduced_values_buff = calculate_sums_and_max(comparison_buffer)
+        if self.output_radius is not None:
+            reduced_values_buff = calculate_sums_and_max_radius(comparison_buffer, self.output_radius)
+        else:
+            reduced_values_buff = calculate_sums_and_max(comparison_buffer)
 
         update_best_value(
             self.best_values_buffer,
