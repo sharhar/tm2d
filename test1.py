@@ -6,7 +6,7 @@ import sys
 import tm2d_utils as tu
 
 pixel_sizes = np.arange(1.04, 1.08, 0.0004)
-B_factors = np.arange(0, 250, 2.5)
+B_factors = np.arange(0, 250, 0.25)
 
 params = tm2d.make_param_set(
     tm2d.make_ctf_set(
@@ -29,12 +29,15 @@ template_type = sys.argv[1]
 
 micrographs= np.array([tu.whiten_image(np.load("data/bronwyn/image.npy"), double_whiten=True)])
 
+#micrographs = np.ones((1, 1024, 1024), dtype=np.float32)
+
 if template_type == "atomic":
     results = tu.run_tm2d_atomic_pixels(
         micrographs=micrographs,
         param_set=params,
-        template_box_size=(576, 576),
+        template_box_size=(256, 256),
         atomic_coords=tu.load_coords_from_npz("data/parsed_5lks_LSU.npz"),
+        output_radius=16,
         enable_progress_bar=True
     )
 elif template_type == "density":
@@ -42,6 +45,7 @@ elif template_type == "density":
         micrographs=micrographs,
         param_set=params,
         density=tu.load_density_from_mrc("data/parsed_5lks_LSU_sim_120.mrc"),
+        output_radius=16,
         enable_progress_bar=True
     )
 else:
@@ -51,7 +55,7 @@ output_dir = "."
 
 for i in range(results.micrograph_count):
     #np.save(f"{output_dir}/template{i}.npy", plan.template_buffer.read_real(0)[i])
-    #np.save(f"{output_dir}/comparison{i}.npy", plan.comparison_buffer.read_real(0)[i])
+    # np.save(f"{output_dir}/comparison{i}.npy", plan.comparison_buffer.read_real(0)[i])
 
     np.save(f"{output_dir}/mip{i}.npy", results.get_mip()[i])
 

@@ -11,5 +11,5 @@ class Comparator:
         """
         raise NotImplementedError("set_data must be implemented in a subclass.")
 
-    def compare_template(self, template: vd.RFFTBuffer, normalize: bool = True) -> vd.RFFTBuffer:
+    def compare_template(self, template: vd.RFFTBuffer, normalize: bool = True, output_radius: int = None) -> vd.RFFTBuffer:
         raise NotImplementedError("compare_template must be implemented in a subclass.")

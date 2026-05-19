@@ -77,7 +77,7 @@ class ComparatorCrossCorrelation(Comparator):
         data = np.fft.rfft2(data).astype(np.complex64)
         self.micrographs_buffer.write_fourier(data)
 
-    def compare_template(self, template_buffer: vd.RFFTBuffer, normalize: bool = True) -> vd.RFFTBuffer:
+    def compare_template(self, template_buffer: vd.RFFTBuffer, normalize: bool = True, output_radius: int = None) -> vd.RFFTBuffer:
         assert normalize, "Normalization is mandatory for cross-correlation."
 
         correlation_shape = (
@@ -87,6 +87,7 @@ class ComparatorCrossCorrelation(Comparator):
         )
 
         correlation_signal = vd.RFFTBuffer(correlation_shape)
+        correlation_signal_out = vd.RFFTBuffer(correlation_shape)
 
         template_sum = calc_sums(template_buffer)
 
@@ -109,6 +110,16 @@ class ComparatorCrossCorrelation(Comparator):
         )
 
         @vd.map
+        def conv_input_map(input_buffer: vc.Buffer[c64]):
+            with vc.if_block(vc.all(
+                vd.fft.read_op().fft_index >= self.micrographs_buffer.shape[1] // 2 - template_buffer.shape[1]// 2,
+                vd.fft.read_op().fft_index < self.micrographs_buffer.shape[1] // 2 + template_buffer.shape[1] // 2)):
+                vd.fft.read_op().read_from_buffer(input_buffer)
+            with vc.else_block():
+                vd.fft.read_op().register.real = 0.0
+                vd.fft.read_op().register.imag = 0.0
+
+        @vd.map
         def convolution_map(kernel_buffer: vc.Buffer[c64]):
             img_val = vd.fft.read_op().register
             read_register = vc.new_complex64_register()
@@ -118,8 +129,19 @@ class ComparatorCrossCorrelation(Comparator):
 
         @vd.map
         def output_map_func(output_buffer: vc.Buffer[c64]):
-            out_reg = vd.fft.write_op().register
-            output_buffer[vd.fft.write_op().io_index + kernel_offset * template_buffer.shape[0] * vd.fft.mapped_kernel_index()] = out_reg
+            if output_radius is None:
+                out_reg = vd.fft.write_op().register
+                output_buffer[vd.fft.write_op().io_index + kernel_offset * template_buffer.shape[0] * vd.fft.mapped_kernel_index()] = out_reg
+                return
+
+            with vc.if_block(vc.any(
+                vd.fft.write_op().fft_index < output_radius,
+                vd.fft.write_op().fft_index >= self.micrographs_buffer.shape[1] - output_radius)):
+
+                out_reg = vd.fft.write_op().register
+                #out_reg.real = 1 #(vd.fft.write_op().io_index // (self.micrographs_buffer.shape[2] * self.micrographs_buffer.shape[1])).to_dtype(f32)
+                #out_reg.imag = 0.0
+                output_buffer[vd.fft.write_op().io_index + kernel_offset * template_buffer.shape[0] * vd.fft.mapped_kernel_index()] = out_reg
 
         vd.fft.convolve(
             correlation_signal,
@@ -132,10 +154,81 @@ class ComparatorCrossCorrelation(Comparator):
                 self.micrographs_buffer.shape[1],
                 self.micrographs_buffer.shape[2]
             ),
+            input_map=conv_input_map,
             kernel_map=convolution_map,
             output_map=output_map_func
         )
 
-        vd.fft.irfft(correlation_signal)
+        if output_radius is None:
+            vd.fft.irfft(correlation_signal)
+            return correlation_signal
 
-        return correlation_signal
+        trimmed_shape = (
+            correlation_signal.real_shape[0],
+            output_radius * 2,
+            correlation_signal.real_shape[2]
+        )
+
+        trimmed_shape_2 = (
+            correlation_signal.shape[0],
+            output_radius * 2,
+            correlation_signal.shape[2] * 2
+        )
+
+        trimmed_shape_3 = (
+            correlation_signal.shape[0],
+            output_radius * 2,
+            correlation_signal.shape[2]
+        )
+
+        corr_shape_2 = (
+            correlation_signal.shape[0],
+            correlation_signal.shape[1],
+            correlation_signal.shape[2] * 2,
+        )
+
+        @vd.map
+        def irfft_map_input(input_buffer: vc.Buffer[c64]):
+            io_index = vd.fft.read_op().io_index
+
+            with vc.if_block(vd.fft.read_op().fft_index >= (vd.fft.read_op().fft_size // 2) + 1):
+                io_index[:] = vd.fft.read_op().r2c_inverse_offset - io_index
+
+            coord3d = vc.ravel_index(vd.fft.read_op().io_index, trimmed_shape_3).to_register()
+
+            with vc.if_block(coord3d.y >= output_radius):
+              coord3d.y += correlation_signal.shape[1] - output_radius * 2
+
+            new_io_index = vc.unravel_index(coord3d, correlation_signal.shape).to_register()
+
+            vd.fft.read_op().register[:] = input_buffer[new_io_index]
+
+            with vc.if_block(vd.fft.read_op().fft_index >= (vd.fft.read_op().fft_size // 2) + 1):
+                vd.fft.read_op().register.imag = -vd.fft.read_op().register.imag
+
+        @vd.map
+        def irfft_map_output(output_buffer: vc.Buffer[c64]):
+            coord3d = vc.ravel_index(vd.fft.write_op().io_index, trimmed_shape_2).to_register()
+
+            with vc.if_block(vc.any(
+                coord3d.z < output_radius,
+                coord3d.z >= self.micrographs_buffer.real_shape[2] - output_radius)):
+
+                with vc.if_block(coord3d.y >= output_radius):
+                    coord3d.y += correlation_signal.shape[1] - output_radius * 2
+
+                new_io_index = vc.unravel_index(coord3d, corr_shape_2).to_register()
+
+                vd.fft.write_op().write_to_buffer(output_buffer, io_index=new_io_index)
+
+        vd.fft.fft(
+            correlation_signal_out,
+            correlation_signal,
+            buffer_shape=trimmed_shape,
+            input_map=irfft_map_input,
+            output_map=irfft_map_output,
+            r2c=True,
+            inverse=True
+        )
+
+        return correlation_signal_out

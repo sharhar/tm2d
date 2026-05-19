@@ -35,6 +35,7 @@ class Plan:
                  pixel_size: Optional[float] = None,
                  ctf_params: Optional[CTFParams] = None,
                  template_batch_size: int = 2,
+                 output_radius: Optional[int] = None,
                  enable_rotation_weights: bool = False):
 
         self.template_batch_size = template_batch_size
@@ -69,7 +70,10 @@ class Plan:
             ctf_params=ctf_params
         )
 
-        self.comparison_buffer = self.comparator.compare_template(self.template_buffer)
+        self.comparison_buffer = self.comparator.compare_template(
+            self.template_buffer,
+            output_radius=output_radius
+        )
 
         self.results.check_comparison(
             self.comparison_buffer,
