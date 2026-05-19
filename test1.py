@@ -37,7 +37,7 @@ if template_type == "atomic":
         param_set=params,
         template_box_size=(256, 256),
         atomic_coords=tu.load_coords_from_npz("data/parsed_5lks_LSU.npz"),
-        output_radius=16,
+        output_radius=3,
         enable_progress_bar=True
     )
 elif template_type == "density":

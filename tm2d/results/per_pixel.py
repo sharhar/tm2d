@@ -64,6 +64,8 @@ class ResultsPixel(Results):
     sum_cross: vd.Buffer # running mean
     sum2_cross: vd.Buffer # running variance
 
+    output_radius: int
+
     micrograph_count: int
 
     compiled: bool
@@ -75,12 +77,14 @@ class ResultsPixel(Results):
 
     templates_count: int
 
-    def __init__(self, shape: tuple) -> None:
+    def __init__(self, shape: tuple, output_radius: int = None) -> None:
         assert len(shape) == 3, "Shape must be a 3D tuple (L, H, W)."
 
         micrograph_count = int(shape[0])
-        width = int(shape[1])
-        height = int(shape[2])
+        width = int(shape[1]) if output_radius is None else int(output_radius * 2)
+        height = int(shape[2]) if output_radius is None else int(output_radius * 2)
+
+        self.output_radius = output_radius
 
         self.micrograph_count = micrograph_count
 
@@ -151,11 +155,8 @@ class ResultsPixel(Results):
         assert self.compiled, "Results must be compiled before accessing the templates count."
         return self.templates_count
 
-    def check_comparison(self, comparison_buffer: vd.Buffer, rotation_weights: vc.Var[vc.f32], *indicies: vc.Var[vc.i32]):
+    def check_comparison(self, comparison_buffer: vd.RFFTBuffer, rotation_weights: vc.Var[vc.f32], *indicies: vc.Var[vc.i32]):
         assert comparison_buffer.shape[0] % self.max_cross.shape[0] == 0, "Comparison buffer size must be a multiple of the number of templates."
-
-        template_count = comparison_buffer.shape[0] // self.max_cross.shape[0]
-        template_offset = self.max_cross.shape[1] * (self.max_cross.shape[2] + 2) * template_count
 
         rotation_weights_type = vc.Const[vc.f32] if isinstance(rotation_weights, int) else vc.Var[vc.f32]
 
@@ -176,16 +177,25 @@ class ResultsPixel(Results):
                        cross_correlation: vc.Buff[vc.f32],
                        rot_weights: vc.Var[vc.f32],
                        *index_values: vc.Var[vc.i32]):
-            ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
+            ind = vc.global_invocation_id().x
 
-            micrograph_span = self.max_cross.shape[1] * self.max_cross.shape[2]
-            micrograph_span_rfft = self.max_cross.shape[1] * (self.max_cross.shape[2] + 2)
+            coord_3 = vc.ravel_index(ind, self.max_cross.shape).to_register()
 
-            micrograph_index = (ind // micrograph_span).to_register()
-            micrograph_inner_index = (ind % micrograph_span).to_register()
+            coord_2 = coord_3.swizzle("yz").to_dtype(vc.iv2).to_register()
+            coord_2 += vc.new_ivec2_register(self.max_cross.shape[1] // 2, self.max_cross.shape[2] // 2)
+            coord_2[:] = vc.mod(coord_2, vc.new_ivec2_register(self.max_cross.shape[1], self.max_cross.shape[2])).to_dtype(vc.iv2)
+            coord_2 -= vc.new_ivec2_register(self.max_cross.shape[1] // 2, self.max_cross.shape[2] // 2)
+            coord_2[:] = vc.mod(coord_2, vc.new_ivec2_register(comparison_buffer.real_shape[1], comparison_buffer.real_shape[2])).to_dtype(vc.iv2)
 
-            cross_corr_index = (micrograph_inner_index + 2 * (micrograph_inner_index // (self.max_cross.shape[2]))).to_register()
-            cross_corr_index[:] = cross_corr_index + micrograph_index * template_offset
+            micrograph_inner_index = vc.unravel_index(coord_2, (comparison_buffer.real_shape[1], comparison_buffer.real_shape[2])).to_dtype(vc.i32).to_register()
+
+            cross_corr_index = (micrograph_inner_index + 2 * (micrograph_inner_index // (comparison_buffer.real_shape[2]))).to_register()
+
+            template_count = comparison_buffer.shape[0] // self.max_cross.shape[0]
+            template_offset = comparison_buffer.shape[1] * comparison_buffer.shape[2] * 2 * template_count
+            cross_corr_index[:] = cross_corr_index + coord_3.x.to_dtype(vc.i32) * template_offset
+
+            micrograph_span_rfft = comparison_buffer.shape[1] * comparison_buffer.shape[2] * 2
 
             best_mip_val, best_index_val, sum_cross_val, sum2_cross_val = accumulate(
                 template_count,
