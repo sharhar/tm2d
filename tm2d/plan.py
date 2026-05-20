@@ -232,7 +232,8 @@ class Plan:
     def run(self,
             params: ParamSet,
             enable_progress_bar: bool = False,
-            batch_size: int = 32):
+            batch_size: int = 32,
+            compile_results: bool = True):
 
         if params.rotations_weights is None and self.enable_rotation_weights:
             raise ValueError("enable_rotation_weights is True, but no rotation weights provided in params.")
@@ -251,7 +252,8 @@ class Plan:
 
         self._iter_ctf_params(params, batch_size)
 
-        self.results.compile_results(params.get_total_count())
+        if compile_results:
+            self.results.compile_results(params.get_total_count())
 
         if self._status_bar is not None:
             self._status_bar.close()
