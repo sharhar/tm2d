@@ -1,3 +1,4 @@
+import os
 import tm2d
 import numpy as np
 
@@ -24,24 +25,24 @@ params = tm2d.make_param_set(
 )
 
 # A copy of the data folder can be found at:
-# /BigData/Workspaces/shahar/data
+data_folder = '/BigData/Workspaces/shahar/data'
 
 template_type = sys.argv[1]
 
 if template_type == "atomic":
     template_obj = tm2d.TemplateAtomic(
-        (256, 256),
-        tu.load_coords_from_npz("data/parsed_5lks_LSU.npz"),
+        (512, 512),
+        tu.load_coords_from_npz(os.path.join(data_folder, "parsed_5lks_LSU.npz")),
     )
 elif template_type == "density":
-    density = tu.load_density_from_mrc("data/parsed_5lks_LSU_sim_120.mrc")
+    density = tu.load_density_from_mrc(os.path.join(data_folder, "bronwyn/parsed_5lks_LSU_sim_120.mrc"))
     template_obj = tm2d.TemplateDensity(density.density, density.pixel_size)
 else:
     raise ValueError(f"Unknown template type: {template_type}")
 
 data_array = np.array(
     [
-        tu.whiten_image(np.load("data/bronwyn/image.npy"), double_whiten=True),
+        tu.whiten_image(np.load(os.path.join(data_folder, "bronwyn/image.npy")), double_whiten=True),
     ]
 )
 
@@ -50,8 +51,8 @@ comparator = tm2d.ComparatorCrossCorrelation(
     template_obj.get_shape()
 )
 
-#results = tm2d.ResultsPixel(data_array.shape, output_radius=4)
-results = tm2d.ResultsParam(data_array.shape[0], params.get_total_count(), output_radius=4)
+results = tm2d.ResultsPixel(data_array.shape, output_radius=4)
+# results = tm2d.ResultsParam(data_array.shape[0], params.get_total_count(), output_radius=4)
 
 plan = tm2d.Plan(
     template_obj,
@@ -68,59 +69,6 @@ plan.set_data(data_array)
 plan.run(params, enable_progress_bar=True)
 
 output_dir = "."
-
-zscore_list = results.get_zscore_list(params)
-mip_list = results.get_mip_list(params)
-
-plt.imshow(
-    zscore_list[0][0],
-    extent=[
-        min(B_factors), max(B_factors),
-        min(pixel_sizes), max(pixel_sizes)
-    ],
-    aspect="auto",
-    origin="lower"
-)
-plt.colorbar()
-plt.title(f"Z-scores {template_type}")
-plt.xlabel("B Factor")
-plt.ylabel("Pixel Size")
-#plt.savefig(f"zscore_{template_type}.png")
-plt.show()
-#np.save(f"zscore_{template_type}.npy", zscore_list[0][0])
-
-plt.imshow(
-    mip_list[0][0],
-    extent=[
-        min(B_factors), max(B_factors),
-        min(pixel_sizes), max(pixel_sizes)
-    ],
-    aspect="auto",
-    origin="lower"
-)
-plt.colorbar()
-plt.title(f"MIPs {template_type}")
-plt.xlabel("B Factor")
-plt.ylabel("Pixel Size")
-#plt.savefig(f"mip_{template_type}.png")
-plt.show()
-#np.save(f"mip_{template_type}.npy", mip_list[0][0])
-
-print(mip_list.shape)
-
-best_index = np.argmax(zscore_list)
-values = params.get_values_at_index(best_index)
-
-print(values)
-
-values = params.get_values_tensor(zscore_list)
-
-print(values[0].shape)
-print(values[1])
-
-print(params.get_tensor_axes_names())
-
-exit()
 
 for i in range(results.micrograph_count):
     np.save(f"{output_dir}/template{i}.npy", plan.template_buffer.read_real(0)[i])
@@ -147,6 +95,10 @@ for i in range(results.micrograph_count):
         np.save(f"{output_dir}/{param_name}_{i}.npy", param_values)
 
 
+    fig, ax = plt.subplots(ncols=2)
+    ax[0].imshow(results.get_mip()[i], cmap='gray')
+    ax[1].imshow(z_score, cmap='gray')
+    fig.savefig(f"{output_dir}/results_{i}.png")
 
 
 """
