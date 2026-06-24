@@ -8,6 +8,21 @@ from ..ctf.ctf import CTFParams, apply_ctfs_to_rfft_signals
 
 import numpy as np
 
+def center_pad_density(density_array: np.ndarray, padding_factor: int) -> np.ndarray:
+    if padding_factor == 1:
+        return density_array
+
+    padded_shape = tuple(int(dim * padding_factor) for dim in density_array.shape)
+    padded = np.zeros(padded_shape, dtype=density_array.dtype)
+
+    slices = []
+    for input_dim, padded_dim in zip(density_array.shape, padded_shape):
+        start = (padded_dim - input_dim) // 2
+        slices.append(slice(start, start + input_dim))
+
+    padded[tuple(slices)] = density_array
+    return padded
+
 @vd.shader(exec_size=lambda args: args.input_buff.size * 2)
 def fftshift(output: vc.Buff[vc.f32], input_buff: vc.Buff[vc.f32]):
     ind = vc.global_invocation_id().x.to_dtype(vd.int32).to_register()
@@ -90,9 +105,11 @@ def extract_fft_slices(
     template_buffer: vd.RFFTBuffer,
     sampler: vd.Sampler,
     image_size: int,
+    density_image_size: int,
     rotations: np.ndarray,
     pixel_size: float,
     base_pixel_size: float,
+    fourier_oversampling_factor: float,
     ctf_params: CTFParams,
     disable_ctf: bool,
     cmd_graph: vd.CommandGraph
@@ -107,6 +124,7 @@ def extract_fft_slices(
             vc.Buff[vc.c64], # output buffer
             vc.Img3[vc.f32], # input image
             vc.Const[vc.i32], # input image dim
+            vc.Const[vc.i32], # padded density image dim
             rotation_type, # rotation matrix
             pixel_size_type, # pixel size
             *ctf_params.get_type_list(template_buffer.shape[0]) # ctf params
@@ -116,6 +134,7 @@ def extract_fft_slices(
         buff: vc.Buff[vc.c64],
         img: vc.Img3[vc.f32],
         img_dim: vc.Const[vc.i32],
+        density_img_dim: vc.Const[vc.i32],
         rotation,
         pix_size,
         *in_args):
@@ -131,18 +150,31 @@ def extract_fft_slices(
         ipos.y[:] = vc.mod(ipos.y, img_dim).to_dtype(vc.i32)
         ipos.y -= img_dim // 2
 
+        r_max = vc.new_int_register()
+        r_max[:] = img_dim // 2
+
+        r2 = vc.new_int_register()
+        r2[:] = ipos.x * ipos.x + ipos.y * ipos.y
+
+        with vc.if_block(r2 > r_max * r_max):
+            for i in range(template_buffer.shape[0]):
+                index = ind + i * template_buffer.shape[1] * template_buffer.shape[2]
+                buff[index].real = 0
+                buff[index].imag = 0
+            vc.return_statement()
+
         my_pos = ipos.to_dtype(vc.v4).to_register()
 
         # rotate the position to 3D template space
-        my_pos[:] = rotation * my_pos * (base_pixel_size / pix_size)
+        my_pos[:] = rotation * my_pos * (base_pixel_size / pix_size) * fourier_oversampling_factor
 
         with vc.if_block(vc.any(
-            my_pos.x < -template_buffer.shape[1],
-            my_pos.x > (template_buffer.shape[1] - 1),
-            my_pos.y < -template_buffer.shape[1],
-            my_pos.y > (template_buffer.shape[1] - 1),
-            my_pos.z < -template_buffer.shape[1],
-            my_pos.z > (template_buffer.shape[1] - 1))):
+            my_pos.x < -(density_img_dim // 2),
+            my_pos.x > (density_img_dim // 2 - 1),
+            my_pos.y < -(density_img_dim // 2),
+            my_pos.y > (density_img_dim // 2 - 1),
+            my_pos.z < -(density_img_dim // 2),
+            my_pos.z > (density_img_dim // 2 - 1))):
 
             for i in range(template_buffer.shape[0]):
                 index = ind + i * template_buffer.shape[1] * template_buffer.shape[2]
@@ -180,6 +212,7 @@ def extract_fft_slices(
         template_buffer,
         sampler,
         image_size,
+        density_image_size,
         rotations,
         pixel_size,
         *ctf_params.get_args(cmd_graph, template_buffer.shape[0])
@@ -189,6 +222,7 @@ class TemplateDensity(Template):
     shape: Tuple[int, int]
     density_array: np.ndarray
     density_pixel_size: float
+    density_padding_factor: int
     density_image: vd.Image3D
     disable_ctf: bool
 
@@ -196,15 +230,27 @@ class TemplateDensity(Template):
                  density_array: np.ndarray,
                  density_pixel_size: float,
                  transformed: bool = False,
-                 disable_ctf: bool = False):
+                 disable_ctf: bool = False,
+                 padding_factor: int = 1):
         assert density_array.ndim == 3, "Density array must be a 3D array."
+        assert padding_factor >= 1, "Padding factor must be at least 1."
 
         self.disable_ctf = disable_ctf
-        self.density_array = density_array
+        self.density_padding_factor = int(padding_factor)
+        self.shape = (density_array.shape[0], density_array.shape[1])
         self.density_pixel_size = density_pixel_size
 
+        if transformed:
+            assert self.density_padding_factor == 1, "Padding is only supported for real-space density arrays."
+            self.density_array = density_array.astype(np.complex64)
+        else:
+            self.density_array = center_pad_density(
+                density_array,
+                self.density_padding_factor
+            )
+
         if not transformed:
-            self.density_array = np.fft.fftn(np.fft.fftshift(density_array)).astype(np.complex64)
+            self.density_array = np.fft.fftn(np.fft.fftshift(self.density_array)).astype(np.complex64)
 
         self.density_array = self.density_array.astype(np.complex64)
 
@@ -214,8 +260,6 @@ class TemplateDensity(Template):
         self.density_image.write(self.density_array)
 
         self.density_image.sample
-
-        self.shape = (self.density_array.shape[0], self.density_array.shape[1])
 
     def _make_template(self,
                     rotations: vc.Var[vc.m4],
@@ -232,10 +276,12 @@ class TemplateDensity(Template):
             self.density_image.sample(
                 address_mode=vd.AddressMode.REPEAT,
             ),
+            self.shape[1],
             self.density_array.shape[1],
             rotations,
             pixel_size,
             self.density_pixel_size,
+            float(self.density_padding_factor),
             ctf_params,
             self.disable_ctf,
             cmd_graph
