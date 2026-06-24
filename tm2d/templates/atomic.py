@@ -16,30 +16,27 @@ def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     sin_phi   = np.sin(np.deg2rad(angles[:, 0]))
     cos_theta = np.cos(np.deg2rad(angles[:, 1]))
     sin_theta = np.sin(np.deg2rad(angles[:, 1]))
+    cos_psi   = np.cos(np.deg2rad(angles[:, 2]))
+    sin_psi   = np.sin(np.deg2rad(angles[:, 2]))
 
-    M00 = cos_phi * cos_theta
-    M01 = -sin_phi
+    r00 = cos_phi * cos_theta * cos_psi - sin_phi * sin_psi
+    r10 = sin_phi * cos_theta * cos_psi + cos_phi * sin_psi
+    r20 = -sin_theta * cos_psi
 
-    M10 = sin_phi * cos_theta
-    M11 = cos_phi
+    r01 = -cos_phi * cos_theta * sin_psi - sin_phi * cos_psi
+    r11 = -sin_phi * cos_theta * sin_psi + cos_phi * cos_psi
+    r21 = sin_theta * sin_psi
 
-    M20 = -sin_theta
+    # project_atoms stores atom coordinates internally as (-y, x, z) and writes
+    # image pixels as (row=-pos.x, col=pos.y). These rows convert the RELION /
+    # density.py Euler basis into that internal coordinate system.
+    in_matricies[0, 0] = r11
+    in_matricies[0, 1] = -r01
+    in_matricies[0, 2] = -r21
 
-    cos_psi_in_plane   = np.cos(np.deg2rad(-angles[:, 2] - 90))
-    sin_psi_in_plane   = np.sin(np.deg2rad(-angles[:, 2] - 90))
-
-    m00  = cos_psi_in_plane
-    m01 = sin_psi_in_plane
-    m10 = -sin_psi_in_plane
-    m11 = cos_psi_in_plane
-
-    in_matricies[0, 0] = m00 * M00 + m10 * M01
-    in_matricies[0, 1] = m00 * M10 + m10 * M11
-    in_matricies[0, 2] = m00 * M20
-
-    in_matricies[1, 0] = m01 * M00 + m11 * M01
-    in_matricies[1, 1] = m01 * M10 + m11 * M11
-    in_matricies[1, 2] = m01 * M20
+    in_matricies[1, 0] = -r10
+    in_matricies[1, 1] = r00
+    in_matricies[1, 2] = r20
 
     return in_matricies.T
 
