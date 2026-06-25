@@ -2,6 +2,7 @@ import vkdispatch as vd
 import numpy as np
 import tqdm
 from typing import Optional
+import os
 
 from .ctf.ctf import CTFParams
 
@@ -70,16 +71,40 @@ class Plan:
             ctf_params=ctf_params
         )
 
-        self.comparison_buffer = self.comparator.compare_template(
-            self.template_buffer,
-            output_radius=output_radius
-        )
+        rotation_weight_var = self.cmd_graph.bind_var("rotation_weight") if self.enable_rotation_weights else 1
+        index_vars = [self.cmd_graph.bind_var(f"index{i}") for i in range(self.template_batch_size)]
 
-        self.results.check_comparison(
-            self.comparison_buffer,
-            self.cmd_graph.bind_var("rotation_weight") if self.enable_rotation_weights else 1,
-            *[self.cmd_graph.bind_var(f"index{i}") for i in range(self.template_batch_size)]
-        )
+        if (
+            output_radius is not None
+            and os.environ.get("TM2D_OUTPUT_RADIUS_MODE") in (
+                "fused_local_dft",
+                "fused_local_dft_rows",
+                "fused_local_dft_rows_recur",
+                "fused_local_dft_rows_table",
+                "fused_local_fft_output",
+                "fused_local_rows_fft_output",
+            )
+            and hasattr(self.comparator, "compare_template_fused_results")
+        ):
+            self.comparison_buffer = None
+            self.comparator.compare_template_fused_results(
+                self.template_buffer,
+                self.results,
+                rotation_weight_var,
+                *index_vars,
+                output_radius=output_radius
+            )
+        else:
+            self.comparison_buffer = self.comparator.compare_template(
+                self.template_buffer,
+                output_radius=output_radius
+            )
+
+            self.results.check_comparison(
+                self.comparison_buffer,
+                rotation_weight_var,
+                *index_vars
+            )
 
         vd.set_global_graph(prev_graph)
 
@@ -264,4 +289,3 @@ class Plan:
         self._pixel_sizes_array = None
         self._ctf_index_arrays = None
         self._index_arrays = None
-
