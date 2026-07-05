@@ -70,12 +70,6 @@ class Template:
 
         return self._get_rotation_matrices(rotations)
 
-    def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
-        return self._get_rotation_matrices(rotations)
-
-    def get_rotation_matricies(self, rotations: Union[np.ndarray, Tuple[float, float, float]]) -> np.ndarray:
-        return self.get_rotation_matrices(rotations)
-
     def get_shape(self) -> tuple:
         """
         Return the shape of the template.

@@ -75,15 +75,7 @@ class ResultsParam(Results):
     compiled_best_mip_values: np.ndarray
     output_radius: int
 
-    def __init__(self, batch_count: int, total_indices: int = None, output_radius: int = None, **kwargs) -> None:
-        if total_indices is None:
-            total_indices = kwargs.pop("total_indicies", None)
-        if kwargs:
-            unexpected = ", ".join(kwargs)
-            raise TypeError(f"Unexpected keyword argument(s): {unexpected}")
-        if total_indices is None:
-            raise TypeError("total_indices is required")
-
+    def __init__(self, batch_count: int, total_indices: int, output_radius: int = None) -> None:
         self.best_values_buffer = vd.Buffer((batch_count, total_indices, ), vd.float32)
         self.best_mip_values_buffer = vd.Buffer((batch_count, total_indices, ), vd.float32)
         self.output_radius = output_radius
