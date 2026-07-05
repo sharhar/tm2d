@@ -110,7 +110,7 @@ class ResultsPixel(Results):
 
     def compile_results(self, templates_count: int):
         max_crosses = self.max_cross.read()
-        best_indicies = self.best_index.read()
+        best_indices = self.best_index.read()
         sum_crosses = self.sum_cross.read()
         sum2_crosses = self.sum2_cross.read()
 
@@ -118,7 +118,7 @@ class ResultsPixel(Results):
 
         for i in range(len(max_crosses)):
             final_results[i][:, :, :, 0] = np.fft.ifftshift(max_crosses[i], axes=(1, 2))
-            final_results[i][:, :, :, 1] = np.fft.ifftshift(best_indicies[i], axes=(1, 2))
+            final_results[i][:, :, :, 1] = np.fft.ifftshift(best_indices[i], axes=(1, 2))
 
         true_final_result = final_results[0]
 
@@ -155,7 +155,7 @@ class ResultsPixel(Results):
         assert self.compiled, "Results must be compiled before accessing the templates count."
         return self.templates_count
 
-    def check_comparison(self, comparison_buffer: vd.RFFTBuffer, rotation_weights: vc.Var[vc.f32], *indicies: vc.Var[vc.i32]):
+    def check_comparison(self, comparison_buffer: vd.RFFTBuffer, rotation_weights: vc.Var[vc.f32], *indices: vc.Var[vc.i32]):
         assert comparison_buffer.shape[0] % self.max_cross.shape[0] == 0, "Comparison buffer size must be a multiple of the number of templates."
 
         rotation_weights_type = vc.Const[vc.f32] if isinstance(rotation_weights, int) else vc.Var[vc.f32]
@@ -169,7 +169,7 @@ class ResultsPixel(Results):
                     vc.Buff[vc.v2],   # sum2_cross
                     vc.Buff[vc.f32],  # cross_correlation
                     rotation_weights_type,  # rotation_weights
-                ] + [vc.Var[vc.i32]] * len(indicies))
+                ] + [vc.Var[vc.i32]] * len(indices))
         def update_max(max_cross: vc.Buff[vc.f32],
                        best_index: vc.Buff[vc.i32],
                        sum_cross: vc.Buff[vc.v2],
@@ -220,6 +220,6 @@ class ResultsPixel(Results):
             self.sum2_cross,
             comparison_buffer,
             rotation_weights,
-            *indicies
+            *indices
         )
 

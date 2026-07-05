@@ -10,7 +10,7 @@ from ..plan import Template
 from ..ctf.ctf import CTFParams, apply_ctfs_to_rfft_signals
 
 def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
-    in_matricies = np.zeros(shape=(4, 4, angles.shape[0]), dtype=np.float32)
+    in_matrices = np.zeros(shape=(4, 4, angles.shape[0]), dtype=np.float32)
 
     cos_phi   = np.cos(np.deg2rad(angles[:, 0]))
     sin_phi   = np.sin(np.deg2rad(angles[:, 0]))
@@ -30,15 +30,15 @@ def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
     # project_atoms stores atom coordinates internally as (-y, x, z) and writes
     # image pixels as (row=-pos.x, col=pos.y). These rows convert the RELION /
     # density.py Euler basis into that internal coordinate system.
-    in_matricies[0, 0] = r11
-    in_matricies[0, 1] = -r01
-    in_matricies[0, 2] = -r21
+    in_matrices[0, 0] = r11
+    in_matrices[0, 1] = -r01
+    in_matrices[0, 2] = -r21
 
-    in_matricies[1, 0] = -r10
-    in_matricies[1, 1] = r00
-    in_matricies[1, 2] = r20
+    in_matrices[1, 0] = -r10
+    in_matrices[1, 1] = r00
+    in_matrices[1, 2] = r20
 
-    return in_matricies.T
+    return in_matrices.T
 
 @vd.shader(exec_size=lambda args: args.buf.size)
 def fill_buffer(buf: Buff[c64], val: Const[c64] = 0):
@@ -96,7 +96,7 @@ def apply_ctf_params(ctf_params: CTFParams,
     apply_ctfs_to_rfft_signals(
         value,
         [value], # registers to apply the ctf to
-        [ctf_index], # indicies for which ctf params to use for each register
+        [ctf_index], # indices for which ctf params to use for each register
         tid,
         template_shape,
         pixel_size,
@@ -345,7 +345,7 @@ class TemplateAtomic(Template):
 
         return template_buffer
 
-    def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
+    def _get_rotation_matrices(self, rotations: np.ndarray) -> np.ndarray:
         return make_atomic_template_rotation_matrix(rotations).astype(np.float32)
 
     def get_shape(self) -> tuple:

@@ -63,7 +63,7 @@ class Plan:
         prev_graph = vd.set_global_graph(self.cmd_graph)
 
         self.template_buffer = self.template.make_template(
-            self.cmd_graph.bind_var("rotation_matrix") if self.rotation is None else self.template.get_rotation_matricies(self.rotation),
+            self.cmd_graph.bind_var("rotation_matrix") if self.rotation is None else self.template.get_rotation_matrices(self.rotation),
             self.cmd_graph.bind_var("pixel_size") if self.pixel_size is None else self.pixel_size,
             template_count=self.template_batch_size,
             cmd_graph=self.cmd_graph,
@@ -107,7 +107,7 @@ class Plan:
 
                 self.cmd_graph.set_var(
                     "rotation_matrix",
-                    self.template.get_rotation_matricies(self._rotations_array[:full_batch_size, :])
+                    self.template.get_rotation_matrices(self._rotations_array[:full_batch_size, :])
                 )
 
             if self.enable_rotation_weights:
@@ -245,7 +245,7 @@ class Plan:
         self._index_arrays = [np.ones(shape=(batch_size,), dtype=np.int32) * -1 for _ in range(self.template_batch_size)]
 
         if params.get_ctf_count() == 1 and self.template_batch_size > 1:
-            print("Warning: Only one ctf parameter combination provided, but template_batch_size is greater than 1. This will result in suboiptimal performance.")
+            print("Warning: Only one ctf parameter combination provided, but template_batch_size is greater than 1. This will result in suboptimal performance.")
 
         if enable_progress_bar:
             self._status_bar = tqdm.tqdm(total=params.get_total_count(), dynamic_ncols=True)

@@ -75,9 +75,17 @@ class ResultsParam(Results):
     compiled_best_mip_values: np.ndarray
     output_radius: int
 
-    def __init__(self, batch_count: int, total_indicies: int, output_radius: int = None) -> None:
-        self.best_values_buffer = vd.Buffer((batch_count, total_indicies, ), vd.float32)
-        self.best_mip_values_buffer = vd.Buffer((batch_count, total_indicies, ), vd.float32)
+    def __init__(self, batch_count: int, total_indices: int = None, output_radius: int = None, **kwargs) -> None:
+        if total_indices is None:
+            total_indices = kwargs.pop("total_indicies", None)
+        if kwargs:
+            unexpected = ", ".join(kwargs)
+            raise TypeError(f"Unexpected keyword argument(s): {unexpected}")
+        if total_indices is None:
+            raise TypeError("total_indices is required")
+
+        self.best_values_buffer = vd.Buffer((batch_count, total_indices, ), vd.float32)
+        self.best_mip_values_buffer = vd.Buffer((batch_count, total_indices, ), vd.float32)
         self.output_radius = output_radius
         self.compiled = False
         self.reset()
@@ -90,15 +98,15 @@ class ResultsParam(Results):
             (np.ones(shape=self.best_mip_values_buffer.shape) * -1000000).astype(np.float32)
         )
 
-    def check_comparison(self, comparison_buffer: vd.RFFTBuffer, rotation_weights: vc.Var[vc.f32], *indicies: vc.Var[vc.i32]):
+    def check_comparison(self, comparison_buffer: vd.RFFTBuffer, rotation_weights: vc.Var[vc.f32], *indices: vc.Var[vc.i32]):
 
         template_count = comparison_buffer.shape[0] // self.best_values_buffer.shape[0]
 
         assert comparison_buffer.shape[0] % self.best_values_buffer.shape[0] == 0, \
             "The comparison buffer shape must be divisible by the best values buffer shape."
 
-        assert len(indicies) == template_count, \
-            f"The number of indicies ({len(indicies)}) must match the number of templates"
+        assert len(indices) == template_count, \
+            f"The number of indices ({len(indices)}) must match the number of templates"
 
         pixel_count = comparison_buffer.shape[1] * (comparison_buffer.shape[2] - 1) * 2
 
@@ -111,14 +119,14 @@ class ResultsParam(Results):
                 vc.Buff[vc.f32],  # mip_buff
                 vc.Buff[vc.v3],  # reduced_values_buff
                 rotation_weights_type,  # rotation_weights
-            ] + [vc.Var[vc.i32]] * len(indicies)
+            ] + [vc.Var[vc.i32]] * len(indices)
         )
         def update_best_value(
             zscore_buff: vc.Buff[vc.f32],
             mip_buff: vc.Buff[vc.f32],
             reduced_values_buff: vc.Buff[vc.v3],
             rot_weights: vc.Var[vc.f32],
-            *indicies: vc.Var[vc.i32]):
+            *indices: vc.Var[vc.i32]):
             _ = rot_weights
 
             ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
@@ -126,12 +134,12 @@ class ResultsParam(Results):
             reduced_values = vc.new_vec3_register()
 
             for i in range(template_count):
-                output_index = ind * self.best_values_buffer.shape[1] + indicies[i]
+                output_index = ind * self.best_values_buffer.shape[1] + indices[i]
                 input_index = ind * template_count + i
 
                 reduced_values[:] = reduced_values_buff[input_index]
 
-                with vc.if_block(indicies[i] >= 0):
+                with vc.if_block(indices[i] >= 0):
                     mean_val = (reduced_values.y / float(pixel_count)).to_register()
                     var_val = vc.max(reduced_values.z / float(pixel_count) - mean_val * mean_val, 0.0).to_register()
                     z_score = ((reduced_values.x - mean_val) / vc.sqrt(var_val + 1e-6)).to_register()
@@ -150,7 +158,7 @@ class ResultsParam(Results):
             self.best_mip_values_buffer,
             reduced_values_buff,
             rotation_weights,
-            *indicies
+            *indices
         )
 
     def compile_results(self, template_count: int):

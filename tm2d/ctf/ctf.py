@@ -176,7 +176,7 @@ def ctf_filter(
 def apply_ctfs_to_rfft_signals(
         input_value: vc.ShaderVariable,
         registers: list[vc.ShaderVariable],
-        indicies: list[int],
+        indices: list[int],
         ind: vc.ShaderVariable,
         signal_shape: tuple[int, int, int],
         pix_size: vc.ShaderVariable,
@@ -202,6 +202,6 @@ def apply_ctfs_to_rfft_signals(
         registers[i][:] = vc.mult_complex(input_value, ctf_filter(
             signal_shape[1:],
             pos_2d,
-            ctf_param_list[indicies[i]],
+            ctf_param_list[indices[i]],
             pix_size
         ))

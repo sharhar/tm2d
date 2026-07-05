@@ -48,7 +48,7 @@ class Template:
                 else:
                     assert rotations.shape[1] == 3 , "Rotations must be a 2D array with shape (N, 3)."
 
-                    rotations = self.get_rotation_matricies(rotations)
+                    rotations = self.get_rotation_matrices(rotations)
 
         return self._make_template(
             rotations=rotations,
@@ -58,17 +58,23 @@ class Template:
             cmd_graph=cmd_graph
         )
 
-    def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
-        raise NotImplementedError("get_rotation_matricies must be implemented in a subclass.")
+    def _get_rotation_matrices(self, rotations: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("get_rotation_matrices must be implemented in a subclass.")
 
-    def get_rotation_matricies(self, rotations: Union[np.ndarray, Tuple[float, float, float]]) -> np.ndarray:
+    def get_rotation_matrices(self, rotations: Union[np.ndarray, Tuple[float, float, float]]) -> np.ndarray:
         if not isinstance(rotations, np.ndarray):
             rotations = np.array(rotations, dtype=np.float32).reshape(1, 3)
 
         if rotations.ndim == 1:
             rotations = rotations.reshape(1, 3)
 
-        return self._get_rotation_matricies(rotations)
+        return self._get_rotation_matrices(rotations)
+
+    def _get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
+        return self._get_rotation_matrices(rotations)
+
+    def get_rotation_matricies(self, rotations: Union[np.ndarray, Tuple[float, float, float]]) -> np.ndarray:
+        return self.get_rotation_matrices(rotations)
 
     def get_shape(self) -> tuple:
         """

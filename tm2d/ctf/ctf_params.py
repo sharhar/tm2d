@@ -264,7 +264,7 @@ class CTFParams:
         static_count = 0
         dynamic_count = 0
         static_values = [None] * len(fields)
-        dynamic_indicies = []
+        dynamic_indices = []
 
         for ii, field in enumerate(fields):
             value = self.__getattribute__(field.name)
@@ -274,7 +274,7 @@ class CTFParams:
                 static_count += 1
             else:
                 dynamic_count += 1
-                dynamic_indicies.append(ii)
+                dynamic_indices.append(ii)
 
         assert len(args_list) == static_count + dynamic_count * template_count, f"Expected {static_count} + {dynamic_count} * {template_count} args, got {len(args_list)}"
 
@@ -283,7 +283,7 @@ class CTFParams:
         result = []
 
         for i in range(template_count):
-            for ii, dyn_ind in enumerate(dynamic_indicies):
+            for ii, dyn_ind in enumerate(dynamic_indices):
                 static_values[dyn_ind] = dynamic_args_list[i * dynamic_count + ii]
 
             result.append(CTFParams.from_arg_list(*static_values))

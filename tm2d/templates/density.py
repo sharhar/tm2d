@@ -296,7 +296,7 @@ class TemplateDensity(Template):
 
         return template_buffer
 
-    def get_rotation_matricies(self, rotations: np.ndarray) -> np.ndarray:
+    def _get_rotation_matrices(self, rotations: np.ndarray) -> np.ndarray:
         return make_density_template_rotation_matrix(rotations).astype(np.float32)
 
     def get_shape(self) -> tuple:
