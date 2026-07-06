@@ -62,13 +62,18 @@ class CTFSet:
 
             last_index = end_index - start_index
 
-            for ii, field in enumerate(self.field_names):
-                input_array[:last_index] = self.combinations_array[start_index:end_index, ii]
+            input_array[:ctf_batch_size] = 0
+            index_arrays[batch_id][:ctf_batch_size] = -self.get_length() * rotations_pixels_count
 
-                cmd_graph.set_var(f"{field}_{batch_id}", np.tile(input_array[:ctf_batch_size], rotations_pixels_batch_size))
+            if last_index > 0:
+                for ii, field in enumerate(self.field_names):
+                    input_array[:last_index] = self.combinations_array[start_index:end_index, ii]
+                    cmd_graph.set_var(f"{field}_{batch_id}", np.tile(input_array[:ctf_batch_size], rotations_pixels_batch_size))
 
-            index_arrays[batch_id][0:last_index] = np.arange(start_index, end_index)
-            index_arrays[batch_id][last_index:ctf_batch_size] = -self.get_length() * rotations_pixels_count
+                index_arrays[batch_id][0:last_index] = np.arange(start_index, end_index)
+            else:
+                for field in self.field_names:
+                    cmd_graph.set_var(f"{field}_{batch_id}", np.tile(input_array[:ctf_batch_size], rotations_pixels_batch_size))
 
             for j in range(1, rotations_pixels_batch_size):
                 index_arrays[batch_id][ctf_batch_size*j:ctf_batch_size*(j+1)] = index_arrays[batch_id][:ctf_batch_size] + self.get_length() * j
