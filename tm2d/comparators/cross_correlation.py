@@ -142,7 +142,7 @@ class ComparatorCrossCorrelation(Comparator):
                 output_buffer[vd.fft.write_op().io_index + kernel_offset * template_buffer.shape[0] * vd.fft.mapped_kernel_index()] = out_reg
 
         vd.fft.convolve(
-            correlation_signal,
+            correlation_signal_out,
             correlation_signal,
             self.micrographs_buffer,
             kernel_num=self.micrographs_buffer.shape[0],
@@ -158,8 +158,8 @@ class ComparatorCrossCorrelation(Comparator):
         )
 
         if output_radius is None:
-            vd.fft.irfft(correlation_signal)
-            return correlation_signal
+            vd.fft.irfft(correlation_signal_out)
+            return correlation_signal_out
 
         trimmed_shape = (
             correlation_signal.real_shape[0],
@@ -221,7 +221,7 @@ class ComparatorCrossCorrelation(Comparator):
 
         vd.fft.fft(
             correlation_signal,
-            correlation_signal,
+            correlation_signal_out,
             buffer_shape=trimmed_shape,
             input_map=irfft_map_input,
             output_map=irfft_map_output,
