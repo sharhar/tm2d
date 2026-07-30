@@ -125,9 +125,13 @@ class Plan:
             rotation_offset = params.get_ctf_count() * params.get_pixel_size_count() * rotation_index
 
             for k in range(self.template_batch_size):
+                index_array = self._index_arrays[k][:full_batch_size].copy()
+                valid_indices = index_array >= 0
+                index_array[valid_indices] += rotation_offset
+                index_array[~valid_indices] = -1
                 self.cmd_graph.set_var(
                     f"index{k}",
-                    self._index_arrays[k][:full_batch_size] + rotation_offset
+                    index_array
                 )
 
             self.cmd_graph.submit_any(full_batch_size)
