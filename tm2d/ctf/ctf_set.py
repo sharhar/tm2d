@@ -63,7 +63,8 @@ class CTFSet:
             last_index = end_index - start_index
 
             input_array[:ctf_batch_size] = 0
-            index_arrays[batch_id][:ctf_batch_size] = -self.get_length() * rotations_pixels_count
+            # unused CTF slots: must stay < 0 after the per-slot offsets (+ length * j) added below
+            index_arrays[batch_id][:ctf_batch_size] = -(2 ** 30)
 
             if last_index > 0:
                 for ii, field in enumerate(self.field_names):

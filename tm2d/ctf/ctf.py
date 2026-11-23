@@ -120,8 +120,10 @@ def ctf_filter(
     wave_shape.x = buffer_shape[0]
     wave_shape.y = buffer_shape[1] * 2 - 2
 
-    Sx_raw = (pos_2d.x/(wave_shape.x * pixel_size)).to_register()
-    Sy_raw = (pos_2d.y/(wave_shape.y * pixel_size)).to_register()
+    # pos_2d.x is the rfft column index kx -> s_x = kx / (W pix); pos_2d.y is the signed row index ky -> s_y = ky / (H pix)
+    # (wave_shape.x = H rows, wave_shape.y = W columns)
+    Sx_raw = (pos_2d.x/(wave_shape.y * pixel_size)).to_register()
+    Sy_raw = (pos_2d.y/(wave_shape.x * pixel_size)).to_register()
 
     Sx = (params.mag_00 * Sx_raw + params.mag_01 * Sy_raw).to_register()
     Sy = (params.mag_10 * Sx_raw + params.mag_11 * Sy_raw).to_register()

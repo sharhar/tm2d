@@ -5,7 +5,7 @@ class Comparator:
     def __init__(self):
         raise NotImplementedError("Comparator is an abstract class. Please implement it in a subclass.")
 
-    def set_data(self, data: np.ndarray):
+    def set_data(self, data: np.ndarray, weights: np.ndarray = None):
         """
         This method should set the data buffer that will be used for comparison.
         """

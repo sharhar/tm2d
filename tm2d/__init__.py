@@ -6,6 +6,7 @@ from .templates.atomic import TemplateAtomic
 from .templates.density import TemplateDensity
 
 from .comparators.cross_correlation import ComparatorCrossCorrelation
+from .weights import RadialWeights
 
 from .results.per_pixel import ResultsPixel
 from .results.per_param import ResultsParam
@@ -23,6 +24,7 @@ __all__ = [
     "TemplateAtomic",
     "TemplateDensity",
     "ComparatorCrossCorrelation",
+    "RadialWeights",
     "ResultsPixel",
     "ResultsParam",
     "Plan",

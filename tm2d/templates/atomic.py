@@ -7,6 +7,7 @@ from typing import Tuple
 import numpy as np
 
 from ..plan import Template
+from ..base_template import per_slot_rotations
 from ..ctf.ctf import CTFParams, apply_ctfs_to_rfft_signals
 
 def make_atomic_template_rotation_matrix(angles: np.ndarray) -> np.ndarray:
@@ -138,8 +139,10 @@ def get_sigmaE(HT):
 def get_pixel_size_type(pixel_size):
     return Const[vd.float32] if isinstance(pixel_size, float) else Var[vd.float32]
 
-def project_atoms(template_buffer, atoms_buffer, rotations, pixel_size):
+def project_atoms(template_buffer, atoms_buffer, rotations, pixel_size, slot: int = 0):
+    """Counts the atoms of one rotation into slot `slot` of the (K, H, W) template buffer (rfft layout)."""
     rotation_type: type = vc.Const[vc.m4] if isinstance(rotations, np.ndarray) else vc.Var[vc.m4]
+    slot_offset = int(slot) * int(template_buffer.shape[1]) * int(template_buffer.shape[2]) * 2   # in 32-bit words
 
     @vd.shader(
         exec_size=atoms_buffer.shape[0],
@@ -165,9 +168,12 @@ def project_atoms(template_buffer, atoms_buffer, rotations, pixel_size):
 
         pos[:] = rot_matrix * pos
 
+        # nearest pixel (floor(x + 0.5): GLSL round() leaves the .5 case to the implementation); ceil() shifted every
+        # template by +0.5 px in row and column. image_ind.x is the row (centre H // 2), image_ind.y the column
+        # (centre W // 2), so non-square boxes are centred on the right axis.
         image_ind = vc.new_ivec2_register()
-        image_ind.y = vc.ceil(pos.y).to_dtype(vd.int32) + (image.shape.y // 2)
-        image_ind.x = vc.ceil(-pos.x).to_dtype(vd.int32) + ((image.shape.z * 2 - 2) // 2)
+        image_ind.y = vc.floor(pos.y + 0.5).to_dtype(vd.int32) + ((image.shape.z * 2 - 2) // 2)
+        image_ind.x = vc.floor(-pos.x + 0.5).to_dtype(vd.int32) + (image.shape.y // 2)
 
         with vc.if_block(vc.any(
             image_ind.x < 0, image_ind.x >= image.shape.y,
@@ -175,7 +181,7 @@ def project_atoms(template_buffer, atoms_buffer, rotations, pixel_size):
         )):
             vc.return_statement()
 
-        vc.atomic_add(image[2 * image_ind.x * image.shape.z + image_ind.y], 1)
+        vc.atomic_add(image[slot_offset + 2 * image_ind.x * image.shape.z + image_ind.y], 1)
 
     project_atoms_shader(template_buffer, atoms_buffer, rotations, pixel_size)
 
@@ -248,8 +254,14 @@ def fused_strided_convolution(
         )
     )
 
-def separate_strided_convolution(template_buffer: vd.Buffer, pixel_size, ctf_params: CTFParams, template_count, ctf_args, disable_ctf):
-    vd.fft.fft(template_buffer, axis=1, buffer_shape=(1, *template_buffer.shape[1:]))
+def separate_strided_convolution(template_buffer: vd.Buffer, pixel_size, ctf_params: CTFParams, template_count, ctf_args, disable_ctf,
+                                 shared: bool = False):
+    """Column FFT, CTF k into slot k, inverse column FFT. shared: all slots come from the projection in slot 0 (one
+    rotation, K CTFs: one projection and one forward FFT for the batch); otherwise each slot holds its own projection."""
+    if shared:
+        vd.fft.fft(template_buffer, axis=1, buffer_shape=(1, *template_buffer.shape[1:]))
+    else:
+        vd.fft.fft(template_buffer, axis=1)
 
     @vd.shader(
         exec_size=template_buffer.shape[1] * template_buffer.shape[2],
@@ -261,10 +273,13 @@ def separate_strided_convolution(template_buffer: vd.Buffer, pixel_size, ctf_par
     )
     def convolution_shader(buff: Buff[c64], pix_size, *args):
         tid = vc.global_invocation_id().x
-        img_val = buff[tid].to_register()
 
+        shared_val = buff[tid].to_register() if shared else None
         for kernel_index in range(template_buffer.shape[0]):
-            result_val = img_val.to_register()
+            if shared:
+                result_val = shared_val.to_register()
+            else:
+                result_val = buff[tid + template_buffer.shape[1] * template_buffer.shape[2] * kernel_index].to_register()
             apply_ctf_params(
                 ctf_params,
                 template_buffer.shape,
@@ -318,8 +333,15 @@ class TemplateAtomic(Template):
 
         template_buffer = vd.RFFTBuffer((template_count, *self.shape))
 
+        # a list = one rotation per slot (one projection each); a single rotation = shared by all slots (one
+        # projection into slot 0, then K CTFs)
+        shared = not isinstance(rotations, (list, tuple)) and not (isinstance(rotations, np.ndarray) and rotations.ndim == 3 and rotations.shape[0] > 1)
         fill_buffer(template_buffer)
-        project_atoms(template_buffer, self.atomic_coords_buffer, rotations, pixel_size)
+        if shared:
+            project_atoms(template_buffer, self.atomic_coords_buffer, per_slot_rotations(rotations, 1)[0], pixel_size, slot=0)
+        else:
+            for k, rotation in enumerate(per_slot_rotations(rotations, template_count)):
+                project_atoms(template_buffer, self.atomic_coords_buffer, rotation, pixel_size, slot=k)
 
         if self.count_atoms:
             reinterpret_int_bits_to_float(template_buffer)
@@ -329,7 +351,7 @@ class TemplateAtomic(Template):
             template_buffer,
             template_buffer,
             1.0 if self.disable_sigma_e else get_sigmaE(ctf_params.HT),
-            buffer_shape=self.shape,
+            buffer_shape=self.shape if shared else (template_count, *self.shape),
             r2c=True,
             input_map=map_int_to_float
         )
@@ -337,9 +359,13 @@ class TemplateAtomic(Template):
         ctf_args = ctf_params.get_args(cmd_graph, template_count)
 
         if self.fuse_ctf_convolution:
+            if not shared:
+                raise NotImplementedError("fuse_ctf_convolution applies K CTFs to one shared projection; with one "
+                                          "rotation per slot use the default separate path (fuse_ctf_convolution=False)")
             fused_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, self.disable_ctf)
         else:
-            separate_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, self.disable_ctf)
+            separate_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, self.disable_ctf,
+                                         shared=shared)
 
         vd.fft.irfft(template_buffer, normalize=False)
 

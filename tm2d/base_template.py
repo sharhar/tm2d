@@ -5,6 +5,25 @@ import numpy as np
 from typing import Union, List, Tuple
 from .ctf.ctf import CTFParams
 
+def per_slot_rotations(rotations, template_count: int) -> list:
+    """The rotation of each of the template_count slots of a template batch, as a list.
+
+    rotations: a list with one entry (graph variable or 4x4 matrix) per slot; a single graph variable or 4x4
+    matrix (all slots share it); or an (N, 4, 4) array with N == 1 (shared) or N == template_count (one each)."""
+    if isinstance(rotations, (list, tuple)):
+        if len(rotations) != template_count:
+            raise ValueError(f"{len(rotations)} rotations given for {template_count} template slots")
+        return list(rotations)
+    if isinstance(rotations, np.ndarray):
+        if rotations.ndim == 2:
+            return [rotations] * template_count
+        if rotations.shape[0] == 1:
+            return [rotations[0]] * template_count
+        if rotations.shape[0] == template_count:
+            return [rotations[k] for k in range(template_count)]
+        raise ValueError(f"{rotations.shape[0]} rotation matrices given for {template_count} template slots")
+    return [rotations] * template_count
+
 class Template:
     def __init__(self):
         raise NotImplementedError("Template is an abstract class. Please implement it in a subclass.")
@@ -35,7 +54,8 @@ class Template:
         if ctf_params is None:
             ctf_params = CTFParams()
 
-        if isinstance(rotations, list):
+        # a list of angles / matrices becomes an array; a list of graph variables (one per slot) passes through
+        if isinstance(rotations, list) and all(isinstance(r, (int, float, np.number, list, tuple, np.ndarray)) for r in rotations):
             rotations = np.array(rotations, dtype=np.float32)
 
         if isinstance(rotations, np.ndarray):

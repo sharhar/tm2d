@@ -1,9 +1,11 @@
 import vkdispatch as vd
+from ..limits import check_buffer_bytes
 import vkdispatch.codegen as vc
 
 from typing import Tuple
 
 from ..plan import Template
+from ..base_template import per_slot_rotations
 from ..ctf.ctf import CTFParams, apply_ctfs_to_rfft_signals
 
 import numpy as np
@@ -43,7 +45,9 @@ def fftshift(output: vc.Buff[vc.f32], input_buff: vc.Buff[vc.f32]):
     image_ind[:] = image_ind * (input_buff.shape.y * input_buff.shape.z * 2)
 
     in_x = ((out_x + input_buff.shape.y // 2) % output.shape.y).to_register()
-    in_y = ((out_y + input_buff.shape.y // 2) % output.shape.y).to_register()
+    # columns shift by W // 2 modulo W (W = 2 * shape.z - 2), not by the row count: matters when H != W
+    width = (2 * input_buff.shape.z - 2).to_dtype(vd.int32).to_register()
+    in_y = ((out_y + width // 2) % width).to_register()
 
     image_ind += in_x * 2 * input_buff.shape.z + in_y
 
@@ -115,7 +119,11 @@ def extract_fft_slices(
     cmd_graph: vd.CommandGraph
 ):
 
-    rotation_type: type = vc.Const[vc.m4] if isinstance(rotations, np.ndarray) else vc.Var[vc.m4]
+    K = template_buffer.shape[0]
+    # a list = one rotation per slot; a single rotation = shared by all slots (one sample, K CTFs)
+    shared = not isinstance(rotations, (list, tuple)) and not (isinstance(rotations, np.ndarray) and rotations.ndim == 3 and rotations.shape[0] > 1)
+    slot_rotations = per_slot_rotations(rotations, 1) if shared else per_slot_rotations(rotations, K)
+    rotation_types = [vc.Const[vc.m4] if isinstance(r, np.ndarray) else vc.Var[vc.m4] for r in slot_rotations]
     pixel_size_type: type = vc.Const[vd.float32] if isinstance(pixel_size, float) else vc.Var[vd.float32]
 
     @vd.shader(
@@ -125,9 +133,9 @@ def extract_fft_slices(
             vc.Img3[vc.f32], # input image
             vc.Const[vc.i32], # input image dim
             vc.Const[vc.i32], # padded density image dim
-            rotation_type, # rotation matrix
+            *rotation_types, # one rotation matrix per slot
             pixel_size_type, # pixel size
-            *ctf_params.get_type_list(template_buffer.shape[0]) # ctf params
+            *ctf_params.get_type_list(K) # ctf params
         ]
     )
     def extract_fft_slices_shader(
@@ -135,9 +143,11 @@ def extract_fft_slices(
         img: vc.Img3[vc.f32],
         img_dim: vc.Const[vc.i32],
         density_img_dim: vc.Const[vc.i32],
-        rotation,
-        pix_size,
-        *in_args):
+        *all_args):
+        n_rot = len(slot_rotations)
+        rotation_args = all_args[:n_rot]
+        pix_size = all_args[n_rot]
+        in_args = all_args[n_rot + 1:]
 
         ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
 
@@ -156,66 +166,58 @@ def extract_fft_slices(
         r2 = vc.new_int_register()
         r2[:] = ipos.x * ipos.x + ipos.y * ipos.y
 
-        with vc.if_block(r2 > r_max * r_max):
-            for i in range(template_buffer.shape[0]):
-                index = ind + i * template_buffer.shape[1] * template_buffer.shape[2]
-                buff[index].real = 0
-                buff[index].imag = 0
-            vc.return_statement()
-
-        my_pos = ipos.to_dtype(vc.v4).to_register()
-
-        # rotate the position to 3D template space
-        my_pos[:] = rotation * my_pos * (base_pixel_size / pix_size) * fourier_oversampling_factor
-
-        with vc.if_block(vc.any(
-            my_pos.x < -(density_img_dim // 2),
-            my_pos.x > (density_img_dim // 2 - 1),
-            my_pos.y < -(density_img_dim // 2),
-            my_pos.y > (density_img_dim // 2 - 1),
-            my_pos.z < -(density_img_dim // 2),
-            my_pos.z > (density_img_dim // 2 - 1))):
-
-            for i in range(template_buffer.shape[0]):
-                index = ind + i * template_buffer.shape[1] * template_buffer.shape[2]
-                buff[index].real = 0
-                buff[index].imag = 0
-            vc.return_statement()
-
-        value = img.sample(my_pos.swizzle("xyz")).swizzle("xy").to_dtype(vc.c64).to_register()
-
-        if disable_ctf:
-            for i in range(template_buffer.shape[0]):
-                index = ind + i * template_buffer.shape[1] * template_buffer.shape[2]
-                buff[index] = value
-
-            return
-
         template_area = template_buffer.shape[1] * template_buffer.shape[2]
 
-        out_values = [
-            buff[ind + i * template_area] for i in range(template_buffer.shape[0])
-        ]
+        with vc.if_block(r2 > r_max * r_max):
+            for i in range(K):
+                index = ind + i * template_area
+                buff[index].real = 0
+                buff[index].imag = 0
+            vc.return_statement()
 
-        apply_ctfs_to_rfft_signals(
-            value,
-            out_values,
-            [i for i in range(template_buffer.shape[0])],
-            ind,
-            template_buffer.shape,
-            pix_size,
-            ctf_params,
-            in_args
-        )
+        base_pos = ipos.to_dtype(vc.v4).to_register()
+
+        for i in range(n_rot):
+            index = ind + i * template_area
+            # rotate the position to 3D template space with this slot's rotation
+            my_pos = (rotation_args[i] * base_pos * (base_pixel_size / pix_size) * fourier_oversampling_factor).to_register()
+
+            slots = list(range(K)) if shared else [i]
+            with vc.if_block(vc.any(
+                my_pos.x < -(density_img_dim // 2),
+                my_pos.x > (density_img_dim // 2 - 1),
+                my_pos.y < -(density_img_dim // 2),
+                my_pos.y > (density_img_dim // 2 - 1),
+                my_pos.z < -(density_img_dim // 2),
+                my_pos.z > (density_img_dim // 2 - 1))):
+                for k in slots:
+                    buff[ind + k * template_area].real = 0
+                    buff[ind + k * template_area].imag = 0
+            with vc.else_block():
+                value = img.sample(my_pos.swizzle("xyz")).swizzle("xy").to_dtype(vc.c64).to_register()
+                if disable_ctf:
+                    for k in slots:
+                        buff[ind + k * template_area] = value
+                else:
+                    apply_ctfs_to_rfft_signals(
+                        value,
+                        [buff[ind + k * template_area] for k in slots],
+                        slots,
+                        ind,
+                        template_buffer.shape,
+                        pix_size,
+                        ctf_params,
+                        in_args
+                    )
 
     extract_fft_slices_shader(
         template_buffer,
         sampler,
         image_size,
         density_image_size,
-        rotations,
+        *slot_rotations,
         pixel_size,
-        *ctf_params.get_args(cmd_graph, template_buffer.shape[0])
+        *ctf_params.get_args(cmd_graph, K)
     )
 
 class TemplateDensity(Template):
@@ -233,6 +235,10 @@ class TemplateDensity(Template):
                  disable_ctf: bool = False,
                  padding_factor: int = 1):
         assert density_array.ndim == 3, "Density array must be a 3D array."
+        # the template box is the volume's (shape[0], shape[1]) and extract_fft_slices scales Fourier coordinates by
+        # one size for all axes, so only cubic volumes give correct slices
+        if not (density_array.shape[0] == density_array.shape[1] == density_array.shape[2]):
+            raise ValueError(f"Density array must be cubic, got shape {density_array.shape}")
         assert padding_factor >= 1, "Padding factor must be at least 1."
 
         self.disable_ctf = disable_ctf
@@ -254,6 +260,8 @@ class TemplateDensity(Template):
 
         self.density_array = self.density_array.astype(np.complex64)
 
+        check_buffer_bytes(self.density_array.shape, 8, "density volume (padded, complex)",
+                           "Use padding_factor=1 or a smaller box.")
         self.density_image = vd.Image3D(
             self.density_array.shape, vd.float32, 2
         )

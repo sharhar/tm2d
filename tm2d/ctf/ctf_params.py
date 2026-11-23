@@ -297,8 +297,10 @@ class CTFParams:
         for f in fields:
             value = getattr(self, f.name)
             unit, scale = self._units.get(f.name, ('', 1.0))
-            scaled = value * scale
-            print(f'  {f.name:<{max_len}} : {scaled:.6g} {unit}')
+            if value is None:
+                print(f'  {f.name:<{max_len}} : (searched)')
+            else:
+                print(f'  {f.name:<{max_len}} : {value * scale:.6g} {unit}')
 
     def __str__(self):
         fields = dataclasses.fields(self)
@@ -307,8 +309,10 @@ class CTFParams:
         for f in fields:
             value = getattr(self, f.name)
             unit, scale = self._units.get(f.name, ('', 1.0))
-            scaled = value * scale
-            lines.append(f'{f.name:<{max_len}} : {scaled:.6g} {unit}')
+            if value is None:
+                lines.append(f'{f.name:<{max_len}} : (searched)')
+            else:
+                lines.append(f'{f.name:<{max_len}} : {value * scale:.6g} {unit}')
         return '\n'.join(lines)
 
     def to_dict_with_units(self):
@@ -317,7 +321,7 @@ class CTFParams:
             value = getattr(self, f.name)
             unit, scale = self._units.get(f.name, ('', 1.0))
             result[f.name] = {
-                'value': value * scale,
+                'value': None if value is None else value * scale,
                 'unit': unit
             }
         return result
@@ -333,11 +337,13 @@ class CTFParams:
         with open(file_path, 'r') as f:
             data = json.load(f)
 
-        kwargs = {}
+        # set the fields directly: __init__ takes mag_matrix / even_zernike / odd_zernike, not mag_00, e_zern_0, ...
+        # (before: always TypeError); None = a searched field
+        obj = cls()
         for field in dataclasses.fields(cls):
-            entry = data[field.name]
-            value = entry['value']
+            if field.name not in data:
+                continue
+            value = data[field.name]['value']
             _, scale = cls._units.get(field.name, ('', 1.0))
-            kwargs[field.name] = value / scale
-
-        return cls(**kwargs)
+            setattr(obj, field.name, None if value is None else value / scale)
+        return obj
