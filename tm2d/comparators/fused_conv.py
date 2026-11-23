@@ -21,6 +21,8 @@ class FusedNormState:
     def __init__(self):
         self.acc = None
         self.partials = None
+        self.cache = None            # per-FFT-register cache (image-side CTF reused across the kernels of a pass)
+        self.compute_kernels = None  # kernels that (re)compute the cached value; the others read the cache
 
     def begin(self):
         self.acc[:] = 0.0
@@ -32,13 +34,22 @@ class FusedNormState:
 def make_fused_norm_convolution_shader(buffer_shape: Tuple, kernel_map: vd.MappingFunction, kernel_num: int,
                                        axis: int, input_map: vd.MappingFunction, output_map: vd.MappingFunction,
                                        state: FusedNormState, kernel_offset: int, template_count: int,
-                                       columns: int):
+                                       columns: int, kernel_indices=None, cache_registers: bool = False):
     """Returns (shader, partials_per_row). Shader arguments, in order: output_map's, input_map's, kernel_map's
     (kernel_map must call state.record(...) once per register and expose the partials buffer as state.partials).
     The partials buffer is (kernel_num * template_count, partials_per_row): row (m * template_count + k) holds
     pieces of sum_s w |T|^2 for micrograph m, template k. Each subgroup sums its threads' accumulators
     (subgroup_add) and lane 0 writes one value, so the buffer and its reduction are subgroup-size times smaller;
-    if the workgroup layout does not allow it (small FFTs), every thread writes its own value."""
+    if the workgroup layout does not allow it (small FFTs), every thread writes its own value.
+
+    kernel_indices: the global kernel indices this shader handles, in loop order (default range(kernel_num)): several
+    shaders can split one kernel list into passes (each redoes the forward FFT). mapped_kernel_index() and the
+    partials rows use the global index. cache_registers: declare one complex register per FFT register at shader
+    scope (state.cache, indexed by the read op's register_id), so the kernel map can keep a value across kernel
+    iterations of the pass."""
+    if kernel_indices is None:
+        kernel_indices = list(range(kernel_num))
+    kernel_indices = [int(k) for k in kernel_indices]
     with vd.fft.fft_context(buffer_shape, axis=axis, compute_type=vd.complex64,
                             name=f"fused_norm_convolution_{buffer_shape}_{axis}") as ctx:
         io_manager = ctx.make_io_manager(input_map=input_map, output_map=output_map, output_type=vd.complex64,
@@ -59,17 +70,19 @@ def make_fused_norm_convolution_shader(buffer_shape: Tuple, kernel_map: vd.Mappi
             partials_per_row = columns * batch_threads
 
         state.acc = vc.new_float_register(0.0)
+        state.cache = ([vc.new_complex64_register() for _ in range(int(ctx.config.register_count))]
+                       if cache_registers else None)
 
         io_manager.read_input()
         ctx.execute(inverse=False)
         ctx.register_shuffle()
 
         backup_registers = None
-        if kernel_num > 1:
+        if len(kernel_indices) > 1:
             backup_registers = ctx.allocate_registers("backup")
             backup_registers.read_from_registers(ctx.registers)
 
-        for kern_index in range(kernel_num):
+        for kern_index in kernel_indices:
             if backup_registers is not None:
                 ctx.registers.read_from_registers(backup_registers)
 

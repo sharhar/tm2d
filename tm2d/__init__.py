@@ -12,6 +12,7 @@ from .results.per_pixel import ResultsPixel
 from .results.per_param import ResultsParam
 
 from .param_set import ParamSet, make_param_set
+from . import prefilter
 
 from .plan import Plan, Template, Comparator, Results
 
@@ -33,4 +34,5 @@ __all__ = [
     "Results",
     "ParamSet",
     "make_param_set",
+    "prefilter",
 ]

@@ -207,3 +207,88 @@ def apply_ctfs_to_rfft_signals(
             ctf_param_list[indices[i]],
             pix_size
         ))
+
+def _is_static_zero(v) -> bool:
+    return v is not None and not isinstance(v, vc.ShaderVariable) and float(v) == 0.0
+
+
+def image_ctf_fast_ok(static_params: CTFParams) -> bool:
+    """Whether image_ctf_value can use the slim formula: no phase plates, Zernike terms or magnification distortion,
+    each fixed (not searched) at zero / identity in the plan's CTFParams (None = searched)."""
+    p = static_params
+    zero = ["zernike", "lpp"] + [f"e_zern_{i}" for i in range(9)] + [f"o_zern_{i}" for i in range(6)] + ["mag_01", "mag_10"]
+    if not all(_is_static_zero(getattr(p, f)) for f in zero):
+        return False
+    return all(getattr(p, f) is not None and float(getattr(p, f)) == 1.0 for f in ("mag_00", "mag_11"))
+
+
+def _mixed(static_value, var):
+    """A field's value for code generation: the Python float if fixed in the plan's CTFParams, else the shader
+    variable (searched field)."""
+    return float(static_value) if static_value is not None else var
+
+
+def _f(x, py, sh):
+    return py(x) if isinstance(x, (int, float)) else sh(x)
+
+
+def image_ctf_value(H: int, W: int, row_signed: vc.ShaderVariable, col: vc.ShaderVariable,
+                    pixel_size, params: CTFParams, static_params: CTFParams = None) -> vc.ShaderVariable:
+    """The CTF (ctf_filter's 2 * CTF, complex if there are odd aberrations) at rfft2 bin (signed row ky, column kx)
+    of an (H, W) micrograph: s = (kx / (W pix), ky / (H pix)). Used by the image-side CTF path of
+    ComparatorCrossCorrelation, which evaluates it per Fourier pixel of the micrograph for every kernel.
+
+    static_params: the plan's CTFParams (None fields = searched). If image_ctf_fast_ok(static_params), the same
+    formula as ctf_filter is generated with the zero terms removed and the fixed fields folded in as Python
+    constants: astigmatism from cos 2(theta - A_ang) = ((sx^2 - sy^2) cos 2A + 2 sx sy sin 2A) / s^2 (no atan2), and the
+    four envelopes as one exp, i.e. one sin and one exp per value. Otherwise the general ctf_filter."""
+    pos_2d = vc.new_vec2_register()
+    pos_2d.x = col.to_dtype(vc.f32)
+    pos_2d.y = row_signed.to_dtype(vc.f32)
+    if static_params is None or not image_ctf_fast_ok(static_params):
+        return ctf_filter((H, W // 2 + 1), pos_2d, params, pixel_size)
+
+    sp = static_params
+    g = {f: _mixed(getattr(sp, f), getattr(params, f)) for f in (
+        "HT", "Cs", "Cc", "energy_spread_fwhm", "accel_voltage_std", "OL_current_std", "beam_semiangle",
+        "johnson_std", "B", "amp_contrast", "defocus", "A_mag", "A_ang")}
+    sqrt = lambda x: _f(x, math.sqrt, vc.sqrt)
+    HT = g["HT"]
+    gamma_lorentz = 1 + HT / E_MASS
+    beta = sqrt(1 - 1 / (gamma_lorentz * gamma_lorentz))
+    epsilon = gamma_lorentz / (1 + HT / (2 * E_MASS))
+    temp1 = epsilon * g["energy_spread_fwhm"] / (HT * (2 * np.sqrt(2 * np.log(2))))
+    temp2 = epsilon * g["accel_voltage_std"]
+    wlen = E_COMPTON / (gamma_lorentz * beta)
+    sigma_f = g["Cc"] * sqrt(temp1 * temp1 + temp2 * temp2 + 4 * g["OL_current_std"] * g["OL_current_std"])
+    wlen_2 = wlen * wlen
+
+    Sx = (pos_2d.x / (W * pixel_size)).to_register()
+    Sy = (pos_2d.y / (H * pixel_size)).to_register()
+    Sr_2 = (Sx * Sx + Sy * Sy).to_register()
+    CWS = (g["Cs"] * wlen_2 * Sr_2).to_register()
+    defocus = g["defocus"]
+    phase_df = (CWS * 0.5 - defocus).to_register()
+    if not _is_static_zero(g["A_mag"]):
+        # ctf_filter: - A cos(2 (atan2(Sy, Sx) + pi/2 - A_ang)) = + A cos(2 (theta - A_ang))
+        a2 = np.pi / 180 * 2 * g["A_ang"]
+        cos2a = _f(a2, math.cos, vc.cos)
+        sin2a = _f(a2, math.sin, vc.sin)
+        inv_s2 = vc.new_float_register(0.0)
+        with vc.if_block(Sr_2 > 0.0):
+            inv_s2[:] = 1.0 / Sr_2
+        cos2 = (((Sx * Sx - Sy * Sy) * cos2a + 2.0 * Sx * Sy * sin2a) * inv_s2).to_register()
+        phase_df[:] = phase_df + g["A_mag"] * cos2
+    gamma = (np.pi * wlen * Sr_2 * phase_df).to_register()
+    sinchi = vc.sin(gamma - g["amp_contrast"]).to_register()
+    cw_df = (CWS - defocus).to_register()
+    expo = (0.5 * sigma_f * sigma_f * np.pi * np.pi * wlen_2 * Sr_2 * Sr_2
+            + 2 * g["beam_semiangle"] * g["beam_semiangle"] * np.pi * np.pi * Sr_2 * cw_df * cw_df
+            + 2 * np.pi * np.pi * g["johnson_std"] * g["johnson_std"] * Sr_2
+            + 0.25 * g["B"] * Sr_2).to_register()
+    ctf = vc.new_complex64_register()
+    ctf.real = 2.0 * vc.exp(-expo) * sinchi
+    ctf.imag = 0.0
+    with vc.if_block(Sr_2 == 0.0):
+        ctf.real = 0.0
+    return ctf
