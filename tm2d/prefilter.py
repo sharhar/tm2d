@@ -80,7 +80,7 @@ def prefilter_micrograph(data: np.ndarray, weights: RadialWeights, ctf_params: C
 
 
 def crop(images: np.ndarray, center_yx, size: int):
-    """Square crops (..., size, size) of (..., H, W) images, centred so that crop pixel (size // 2, size // 2) is
+    """Square crops (..., size, size) of (..., H, W) images, centered so that crop pixel (size // 2, size // 2) is
     image pixel center_yx; also returns the image coordinates (y0, x0) of crop pixel (0, 0). Raises if the crop
     leaves the image."""
     y0, x0 = int(center_yx[0]) - size // 2, int(center_yx[1]) - size // 2

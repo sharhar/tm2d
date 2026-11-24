@@ -169,8 +169,8 @@ def project_atoms(template_buffer, atoms_buffer, rotations, pixel_size, slot: in
         pos[:] = rot_matrix * pos
 
         # nearest pixel (floor(x + 0.5): GLSL round() leaves the .5 case to the implementation); ceil() shifted every
-        # template by +0.5 px in row and column. image_ind.x is the row (centre H // 2), image_ind.y the column
-        # (centre W // 2), so non-square boxes are centred on the right axis.
+        # template by +0.5 px in row and column. image_ind.x is the row (center H // 2), image_ind.y the column
+        # (center W // 2), so non-square boxes are centered on the right axis.
         image_ind = vc.new_ivec2_register()
         image_ind.y = vc.floor(pos.y + 0.5).to_dtype(vd.int32) + ((image.shape.z * 2 - 2) // 2)
         image_ind.x = vc.floor(-pos.x + 0.5).to_dtype(vd.int32) + (image.shape.y // 2)

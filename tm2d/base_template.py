@@ -28,7 +28,7 @@ class Template:
     """Base class of tm2d templates. A subclass implements _make_template, _get_rotation_matrices and get_shape.
 
     supports_ctf_free: True if _make_template takes apply_ctf=False and then renders projections without the CTF
-    (the image-side CTF and prefiltered searches need them). A subclass that sets it must honour the flag; Plan
+    (the image-side CTF and prefiltered searches need them). A subclass that sets it must honor the flag; Plan
     never uses the image side for a template without it."""
     supports_ctf_free: bool = False
 

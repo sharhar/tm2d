@@ -3,9 +3,9 @@ import vkdispatch as vd
 import vkdispatch.codegen as vc
 
 def valid_center_range(n: int, m: int) -> tuple:
-    """Inclusive range of map indices (results maps, centred convention) at which a template of size m lies fully
+    """Inclusive range of map indices (results maps, centered convention) at which a template of size m lies fully
     inside an image of size n. A template with top-left corner at t peaks at index t + m // 2 (the micrograph pixel
-    under the template's centre, for even and odd n), and t runs over 0 .. n - m, as in Leopard-EM's valid mode.
+    under the template's center, for even and odd n), and t runs over 0 .. n - m (a "valid" correlation: the template lies fully inside the image).
     Results maps are the raw circular correlation fftshifted: map index i = (raw index + n // 2) % n."""
     lo = m // 2
     return lo, lo + n - m
@@ -51,7 +51,7 @@ class Results:
     def edges_excluded(self, image_shape: tuple) -> bool:
         """Whether positions where the template crosses the image edge are excluded, for an (H, W) image.
         exclude_edges=True / False as given; "auto" (default): excluded for micrograph searches (template smaller than
-        the image in both dimensions, no output_radius; Leopard-EM's valid mode), not for particle boxes (template as
+        the image in both dimensions, no output_radius; valid positions only), not for particle boxes (template as
         large as the image, or a local search with output_radius: every position is scored, the circular
         correlation, as in tm2d v0.3.0)."""
         if self.exclude_edges_setting is True and self.template_shape is None:

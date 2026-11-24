@@ -12,9 +12,9 @@ from ..ctf.ctf import ctf_filter
 
 @vd.map
 def crop_mapping(in_buff: Buff[f32], sum_buffer: Buff[vc.v3], micrograph_shape: Const[vc.iv2], template_width: Const[vc.i32]):
-    """Pads each template, centred, into a (micrograph_shape) grid as (t - mean_edge) / std_box.
+    """Pads each template, centered, into a (micrograph_shape) grid as (t - mean_edge) / std_box.
 
-    Subtracting the mean of the box's edge pixels (as cisTEM and Leopard-EM do) makes the template ~0 at the box
+    Subtracting the mean of the box's edge pixels makes the template ~0 at the box
     edge, so the zero padding adds no step. Dividing by std_box only keeps values O(1); the score is normalized by
     the template's exact (whitened) norm later, so this scale cancels. template_width = the real box width w: the
     rfft layout (h, w//2 + 1) holds w + 1 (odd w) or w + 2 (even w) floats per row, so w cannot be read off the
@@ -209,8 +209,8 @@ class ComparatorCrossCorrelation(Comparator):
         X(u) = sum_s conj(T(s)) Y(s) w(s) e^{i 2 pi s.u} / N  /  ||t||_w,    ||t||_w^2 = sum_s w(s) |T(s)|^2 / N,
 
     with sums over the full N = H * W grid of numpy's unnormalized fft2, T the edge-mean-subtracted template padded
-    to (H, W), and w = 1/P or w = 1 (no weights). w is 0 at DC and on the Nyquist lines. This equals cisTEM /
-    Leopard-EM's correlation of the whitened image with the whitened, CTF-filtered template, normalized by the
+    to (H, W), and w = 1/P or w = 1 (no weights). w is 0 at DC and on the Nyquist lines. This equals the
+    correlation of the whitened image with the whitened, CTF-filtered template, normalized by the
     whitened template. Each template is normalized by its own exact norm, so under the noise model X has unit
     variance at every pixel, for every template.
 
@@ -348,7 +348,7 @@ class ComparatorCrossCorrelation(Comparator):
             self._write_radial(weights)
         D = np.fft.rfft2(np.asarray(data, dtype=np.float64))
         D *= self.weights   # also zeroes DC and the Nyquist lines
-        # stored transposed, (C, H) per micrograph (zipFFT's layout): the column pass then reads it contiguously.
+        # stored transposed, (C, H) per micrograph: the column pass then reads it contiguously.
         # Same buffer and size; only the order of elements changes.
         M_, H_, C_ = D.shape
         self.micrographs_buffer.write_fourier(np.ascontiguousarray(D.transpose(0, 2, 1)).reshape(M_, H_, C_).astype(np.complex64))
@@ -406,9 +406,9 @@ class ComparatorCrossCorrelation(Comparator):
 
         template_sum = calc_sums(template_buffer)
 
-        # row r2c of the padded template over the template's own h rows only (zipFFT's first kernel), into a small
+        # row r2c of the padded template over the template's own h rows only, into a small
         # (K, h, W) band buffer: the other H - h rows are zero, and the column pass (conv_input_map) synthesizes
-        # them. Band row b = template row b = micrograph row b + H//2 - h//2 (where crop_mapping centres the template).
+        # them. Band row b = template row b = micrograph row b + H//2 - h//2 (where crop_mapping centers the template).
         Hm, Wm = int(self.micrographs_buffer.real_shape[1]), int(self.micrographs_buffer.real_shape[2])
         Cm = Wm // 2 + 1
         hb = int(template_buffer.real_shape[1])

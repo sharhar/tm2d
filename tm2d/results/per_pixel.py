@@ -95,7 +95,7 @@ class ResultsPixel(Results):
 
     def __init__(self, shape: tuple, output_radius: int = None, exclude_edges="auto") -> None:
         """exclude_edges: True = report only positions where the template lies fully inside the micrograph
-        (Leopard-EM's valid mode; elsewhere the circular correlation wraps the template onto the opposite edge);
+        ("valid" positions only; elsewhere the circular correlation wraps the template onto the opposite edge);
         False = every position (circular correlation, as v0.3.0); "auto" (default) = True for micrograph searches,
         False for particle boxes (template as large as the image, or output_radius set); see
         Results.edges_excluded. Excluded positions are NaN in every map (best index -1), with the map shapes
@@ -224,7 +224,7 @@ class ResultsPixel(Results):
         h, w = self.template_shape
         if self.output_radius is None:
             y, x = np.arange(rows), np.arange(cols)
-        else:   # the 2r x 2r output box is centred on map index (H // 2, W // 2)
+        else:   # the 2r x 2r output box is centered on map index (H // 2, W // 2)
             r = self.output_radius
             y, x = np.arange(rows) + H // 2 - r, np.arange(cols) + W // 2 - r
         ylo, yhi = valid_center_range(H, h)
@@ -238,7 +238,7 @@ class ResultsPixel(Results):
         return self.valid_mask
 
     def get_zscore(self):
-        """(MIP - mean) / std per pixel (cisTEM's scaled MIP / Leopard-EM's z-score); 0 where std is 0."""
+        """(MIP - mean) / std per pixel (the z-score, or scaled MIP); 0 where std is 0."""
         std = self.get_std()
         with np.errstate(invalid="ignore"):
             z = np.where(std > 0, (self.compiled_mip - self.get_mean()) / np.where(std > 0, std, 1.0), 0.0)
@@ -263,7 +263,7 @@ class ResultsPixel(Results):
             xlo, xhi = valid_center_range(W, self.template_shape[1])
         else:
             ylo, yhi, xlo, xhi = -(2 ** 30), 2 ** 30, -(2 ** 30), 2 ** 30
-        # map index after compile's fftshift, then the full-map (centred) index
+        # map index after compile's fftshift, then the full-map (centered) index
         y_off = 0 if self.output_radius is None else H // 2 - self.output_radius
         x_off = 0 if self.output_radius is None else W // 2 - self.output_radius
 

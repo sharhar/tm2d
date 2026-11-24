@@ -28,7 +28,7 @@ def decode_max(f):
     return 0.5 * (f - 1.0 / f)
 
 def _in_valid(coord_y, coord_x, height, width, bounds, shifts):
-    """True if raw correlation position (row coord_y, real column coord_x) is a valid position: its centred map index
+    """True if raw correlation position (row coord_y, real column coord_x) is a valid position: its centered map index
     ((y + H//2) % H, (x + W//2) % W) lies in bounds = (ylo, yhi, xlo, xhi) (see valid_center_range)."""
     Y = ((coord_y + shifts.x) % height).to_register()
     X = ((coord_x + shifts.y) % width).to_register()
@@ -120,7 +120,7 @@ class ResultsParam(Results):
 
     def __init__(self, batch_count: int, total_indices: int, output_radius: int = None, exclude_edges="auto") -> None:
         """exclude_edges: True = the max and the moments use only positions where the template lies fully inside
-        the micrograph (Leopard-EM's valid mode; elsewhere the circular correlation wraps the template onto the
+        the micrograph (valid positions only; elsewhere the circular correlation wraps the template onto the
         opposite edge); False = every position; "auto" (default) = True for micrograph searches, False for particle
         boxes (template as large as the image, or output_radius set); see Results.edges_excluded."""
         self.exclude_edges_setting = self._check_edge_setting(exclude_edges)
