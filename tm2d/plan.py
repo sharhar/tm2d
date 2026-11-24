@@ -2,6 +2,7 @@ import copy
 import dataclasses
 import inspect
 import types
+import warnings
 import vkdispatch as vd
 import numpy as np
 import tqdm
@@ -15,33 +16,36 @@ from .base_results import Results
 from .param_set import ParamSet
 
 class Plan:
-    """Exhaustive search of templates against micrographs.
+    """Exhaustive search of templates against micrographs. The command graph is built (compiled) when the ParamSet is
+    known, by prepare() or the first run(), and rebuilt only when the mode it needs changes.
 
-    Each submission of the command graph processes template_batch_size "slots"; per-pixel results are updated once
-    per submission, so a larger template_batch_size means less result traffic per template (and more GPU memory:
-    two (micrographs * template_batch_size, H, W) correlation buffers). Two ways to fill the slots:
+    ctf_side: where the CTF is applied.
+      "image": CTF-free projections; the comparator applies each CTF on the micrograph's own Fourier grid
+          (ComparatorCrossCorrelation.compare_template, image_ctf). No box truncation or aliasing of the CTF, and a
+          projection's forward FFT is shared by ctf_batch_size CTFs. A graph instance holds template_batch_size
+          rotations x ctf_batch_size CTFs (M * ctf_batch_size * template_batch_size correlation maps).
+      "template": the CTF is applied to each template in its box; slots filled as rotation_sharing says.
+      "auto" (default): "image" when image_side_available() (a comparator with image_ctf and fused norms, a template
+          with supports_ctf_free and its CTF not disabled, rotation_sharing "auto"), for any number of CTF values,
+          so a parameter scores the same whether it is searched alone or with others; else "template".
+    A template built with disable_ctf=True is searched without any CTF: "auto" then uses the template side, and
+    "image" raises.
 
-      "per_slot": every slot holds any (rotation, CTF) combination of one pixel size (the parameter list is
-          flattened), one projection per slot; full slots even with a single CTF value.
-      "shared":   the slots of an instance share one rotation and hold K CTF values; one projection (or density
-          sample) per instance, so it is cheaper when there are many CTF values.
+    rotation_sharing (template side): how the template_batch_size slots of a graph instance are filled.
+      "per_slot": any (rotation, CTF) combination of one pixel size per slot, one projection per slot.
+      "shared": the slots of an instance share one rotation and hold template_batch_size CTF values (one projection
+          per instance; cheaper with many CTF values).
       "auto" (default): "shared" if the number of CTF values is a multiple of template_batch_size, else "per_slot".
-          The graph for the mode is built on first use (run) and rebuilt only if the mode changes.
 
-    ctf_side: "template" applies the CTF to each template in its box (the slot modes above). "image" renders CTF-free
-    projections and applies the CTF on the micrograph's Fourier grid inside the comparator (see
-    ComparatorCrossCorrelation.compare_template, image_ctf): no box truncation or aliasing of the CTF, and each
-    projection's forward FFT is shared by ctf_batch_size CTFs. A graph instance then holds template_batch_size
-    rotations x ctf_batch_size CTFs (M * ctf_batch_size * template_batch_size correlation maps). "auto" (default):
-    "image" whenever the image side is available (a comparator with image_ctf and fused norms, a template with a
-    disable_ctf switch, rotation_sharing "auto"), for any number of CTF values, so a given parameter scores the same
-    whether it is searched alone or with others; else "template". Measured (log entries 26-28): with several defoci
-    the image side was 1.04-2.6x faster in every tested configuration; with one defocus 1.13x faster at 256^2 and
-    1.4% slower at 4096^2.
-    ctf_batch_size=None: chosen per ParamSet, the largest divisor of the number of CTF values for which the
-    M * ctf_batch_size * template_batch_size correlation maps fit in one device buffer (no padded CTF slots). kernels_per_pass (image side): the
-    comparator's fused column pass handles at most this many (micrograph, CTF) kernels per shader, CTF-major, reusing
-    each CTF across micrographs (None = all in one pass)."""
+    ctf_batch_size (image side): None = per ParamSet, the largest divisor of the number of CTF values for which the
+    correlation maps fit in one device buffer (no padded CTF slots). kernels_per_pass (image side): the comparator's
+    fused column pass handles at most this many (micrograph, CTF) kernels per shader, CTF-major, reusing each CTF
+    across micrographs (None = all in one pass).
+
+    A prefiltered comparator (tm2d.prefilter) gets CTF-free projections and per-slot filling (its data hold one CTF:
+    "shared" would leave template_batch_size - 1 slots of each instance empty, so it is ignored with a warning).
+
+    Measured speeds by regime: see the user guide (review/tm2d_user_guide.md) and log entries 26-32."""
     template: Template
     comparator: Comparator
     results: Results
@@ -95,14 +99,9 @@ class Plan:
         self._status_bar = None
         self.mode = None
         self.cmd_graph = None
-        if ctf_side == "image":
-            if self.ctf_batch_size is not None:
-                self._build("image")
-        elif rotation_sharing != "auto":
-            self._build(rotation_sharing)       # "auto" then stays on the template side (image_side_available)
 
     def _build(self, mode: str):
-        """Record the command graph for slot mode `mode` ("per_slot" or "shared")."""
+        """Record the command graph for mode `mode` ("per_slot", "shared" or "image")."""
         self.mode = None
         self.cmd_graph = vd.CommandGraph()
 
@@ -124,18 +123,9 @@ class Plan:
         return p
 
     def _make_ctf_free_template(self, rotations, pixel_size, K):
-        """make_template with the template's disable_ctf switched on (restored afterwards): projections only."""
-        had_attr = hasattr(self.template, "disable_ctf")
-        old = getattr(self.template, "disable_ctf", None)
-        self.template.disable_ctf = True
-        try:
-            return self.template.make_template(rotations, pixel_size, template_count=K, cmd_graph=self.cmd_graph,
-                                               ctf_params=self._static_ctf_params())
-        finally:
-            if had_attr:
-                self.template.disable_ctf = old
-            else:
-                del self.template.disable_ctf
+        """Projections without the CTF (Template.make_template(..., apply_ctf=False)); the template is not modified."""
+        return self.template.make_template(rotations, pixel_size, template_count=K, cmd_graph=self.cmd_graph,
+                                           ctf_params=self._static_ctf_params(), apply_ctf=False)
 
     def _record_image(self):
         """Graph for ctf_side="image": K rotations per instance (one CTF-free projection each) x D CTFs applied in the
@@ -151,7 +141,6 @@ class Plan:
 
         image_ctf = types.SimpleNamespace(ctf_params=self.ctf_params, count=D, pixel_size=pixel_size,
                                           args=self.ctf_params.get_args(self.cmd_graph, D),
-                                          static_params=self.ctf_params,
                                           kernels_per_pass=self.kernels_per_pass)
         mic_buffer = getattr(self.comparator, "micrographs_buffer", None)
         trim = (mic_buffer is not None and hasattr(self.results, "edges_excluded") and self.output_radius is None
@@ -235,8 +224,9 @@ class Plan:
         self.results.reset()
 
     def prepare(self, params: ParamSet):
-        """Build (compile) the command graph for the slot mode `params` needs, if not built yet. run() calls it; call
-        it beforehand to keep graph compilation out of a timed run."""
+        """Build (compile) the command graph for the mode `params` needs (choose_mode; on the image side also its
+        ctf_batch_size), if not built yet. run() calls it; call it beforehand to keep graph compilation out of a timed
+        run."""
         mode = self.choose_mode(params)
         if mode == "image":
             D = self._ctf_batch_size_arg or self._auto_ctf_batch_size(params.get_ctf_count())
@@ -247,13 +237,14 @@ class Plan:
             self._build(mode)
 
     def image_side_available(self) -> bool:
-        """Whether ctf_side="auto" may use the image side: the comparator applies image-side CTFs with fused norms,
-        the template can render CTF-free (a disable_ctf switch, so a template that applies its own CTF is never
-        filtered twice), and no template-side slot mode was forced."""
+        """Whether ctf_side="auto" may use the image side: the comparator applies image-side CTFs with fused norms, the
+        template renders CTF-free projections (supports_ctf_free) and does not have its CTF disabled (disable_ctf=True
+        means a search without CTF, which only the template side does), and no template-side slot mode was forced."""
         return ("image_ctf" in inspect.signature(self.comparator.compare_template).parameters
                 and not getattr(self.comparator, "prefiltered", False)
                 and getattr(self.comparator, "norm_method", "fused") == "fused"
-                and hasattr(self.template, "disable_ctf")
+                and getattr(self.template, "supports_ctf_free", False)
+                and not getattr(self.template, "disable_ctf", False)
                 and self.rotation_sharing == "auto")
 
     def _auto_ctf_batch_size(self, C: int) -> int:
@@ -271,15 +262,23 @@ class Plan:
         if getattr(self.comparator, "prefiltered", False):
             # prefiltered data (tm2d.prefilter): each micrograph is already filtered by one CTF
             if params.get_ctf_count() != 1:
-                raise ValueError("a prefiltered comparator takes a ParamSet with one CTF value (the CTF is in the data: "
-                                 "one micrograph per defocus)")
-            if not hasattr(self.template, "disable_ctf"):
-                raise ValueError("a prefiltered comparator needs a template with a disable_ctf switch (CTF-free "
+                raise ValueError("a prefiltered comparator takes a ParamSet with one CTF value (the CTF is in the "
+                                 "data: one micrograph per defocus)")
+            if not getattr(self.template, "supports_ctf_free", False):
+                raise ValueError("a prefiltered comparator needs a template with supports_ctf_free (CTF-free "
                                  "projections)")
             if self.ctf_side == "image":
                 raise ValueError("ctf_side='image' cannot be used with a prefiltered comparator")
-            return self.rotation_sharing if self.rotation_sharing != "auto" else "per_slot"
+            if self.rotation_sharing == "shared":
+                warnings.warn("rotation_sharing='shared' is ignored with a prefiltered comparator (one CTF value: "
+                              "per_slot fills every slot)", stacklevel=3)
+            return "per_slot"
         if self.ctf_side == "image":
+            if not getattr(self.template, "supports_ctf_free", False):
+                raise ValueError(f"ctf_side='image' needs a template with supports_ctf_free; "
+                                 f"{type(self.template).__name__} has none")
+            if getattr(self.template, "disable_ctf", False):
+                raise ValueError("the template has disable_ctf=True (a search without CTF): use ctf_side='template'")
             return "image"
         if self.ctf_side == "auto" and self.image_side_available():
             return "image"
@@ -305,8 +304,10 @@ class Plan:
         for k in range(K):
             if rotation_matrices is not None and not shared:
                 self.cmd_graph.set_var(f"rotation_matrix{k}", rotation_matrices[r[:, k]])
-            for ii, field in enumerate(params.ctf_set.field_names if not getattr(self.comparator, "prefiltered", False) else []):
-                self.cmd_graph.set_var(f"{field}_{k}",      # (prefiltered: CTF-free templates bind no CTF variables)
+            # (prefiltered: CTF-free templates bind no CTF variables)
+            prefiltered = getattr(self.comparator, "prefiltered", False)
+            for ii, field in enumerate([] if prefiltered else params.ctf_set.field_names):
+                self.cmd_graph.set_var(f"{field}_{k}",
                                        params.ctf_set.combinations_array[c[:, k], ii].astype(np.float32))
             if self.enable_rotation_weights and not shared:
                 weights = params.rotations_weights[r[:, k]].astype(np.float32)
@@ -338,7 +339,8 @@ class Plan:
                 self.cmd_graph.set_var(f"rotation_weight{k}", weights)
         for d in range(D):
             for ii, field in enumerate(params.ctf_set.field_names):
-                self.cmd_graph.set_var(f"{field}_{d}", params.ctf_set.combinations_array[cc[:, d], ii].astype(np.float32))
+                values = params.ctf_set.combinations_array[cc[:, d], ii].astype(np.float32)
+                self.cmd_graph.set_var(f"{field}_{d}", values)
         for d in range(D):
             for k in range(K):
                 p = np.where((r[:, k] >= 0) & (c[:, d] >= 0), (r[:, k] * S + pixel_index) * C + c[:, d], -1)

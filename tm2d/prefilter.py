@@ -12,54 +12,47 @@ grid; ComparatorCrossCorrelation(..., prefiltered=True).norm_lag_weights turns t
     A = comp.norm_lag_weights(noise_w, data.shape)          # once per defocus
     comp.set_data(crops_of_g, A_for_each_crop)              # Plan(...) renders CTF-free templates for this comparator
 
-The CTF here is a NumPy copy of the slim formula of ctf.image_ctf_value (no phase plates, Zernike terms or
-magnification distortion); the GPU evaluates it in float32, so the two agree to ~1e-6.
+The CTF is tm2d's one implementation, ctf.ctf_filter, evaluated on the GPU on the micrograph's rfft2 grid with the
+same row convention as the comparator's image-side CTF, so the prefiltered search and the full image-side search use
+the same C_d (any CTFParams: phase plates, Zernike terms and complex CTFs included).
 """
 import dataclasses
-import math
 
 import numpy as np
 
-from .ctf.ctf import E_COMPTON, E_MASS, image_ctf_fast_ok
+from .ctf.ctf import ctf_filter
 from .ctf.ctf_params import CTFParams
 from .weights import RadialWeights, edge_mask
 
 
 def ctf_rfft(shape: tuple, pixel_size: float, params: CTFParams) -> np.ndarray:
-    """2 * CTF (tm2d's convention, as ctf_filter / image_ctf_value) on the rfft2 half-plane of an (H, W) image, 0 at DC.
-    params: every field fixed (no None); phase plates, Zernike terms and magnification must be zero / identity."""
+    """2 * CTF (tm2d's convention, ctf.ctf_filter) on the rfft2 half-plane (H, W // 2 + 1) of an (H, W) image, 0 at DC,
+    complex128. Evaluated by ctf_filter on the GPU with every field folded in as a constant; rows are signed as in
+    ComparatorCrossCorrelation's image-side CTF (row r > H // 2 is ky = r - H, the Nyquist row is +H // 2).
+    params: every field fixed (no None)."""
     for f in dataclasses.fields(params):
         if getattr(params, f.name) is None:
             raise ValueError(f"CTF field {f.name} is None (searched): give a fixed value")
-    if not image_ctf_fast_ok(params):
-        raise NotImplementedError("ctf_rfft covers the standard CTF only (no phase plates, Zernike terms or "
-                                  "magnification distortion)")
-    p = params
+    import vkdispatch as vd
+    import vkdispatch.codegen as vc
     H, W = (int(n) for n in shape)
-    g = 1 + p.HT / E_MASS
-    beta = math.sqrt(1 - 1 / (g * g))
-    eps = g / (1 + p.HT / (2 * E_MASS))
-    t1 = eps * p.energy_spread_fwhm / (p.HT * (2 * math.sqrt(2 * math.log(2))))
-    t2 = eps * p.accel_voltage_std
-    lam = E_COMPTON / (g * beta)
-    sig_f = p.Cc * math.sqrt(t1 * t1 + t2 * t2 + 4 * p.OL_current_std ** 2)
-    sy = np.fft.fftfreq(H)[:, None] / pixel_size
-    sx = np.arange(W // 2 + 1)[None, :] / (W * pixel_size)
-    s2 = sx * sx + sy * sy
-    cws = p.Cs * lam * lam * s2
-    ph = 0.5 * cws - p.defocus
-    if p.A_mag != 0.0:
-        a2 = np.deg2rad(2 * p.A_ang)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            cos2 = np.where(s2 > 0, ((sx * sx - sy * sy) * math.cos(a2) + 2 * sx * sy * math.sin(a2)) / s2, 0.0)
-        ph = ph + p.A_mag * cos2
-    gamma = np.pi * lam * s2 * ph
-    expo = (0.5 * sig_f ** 2 * np.pi ** 2 * lam ** 2 * s2 * s2
-            + 2 * p.beam_semiangle ** 2 * np.pi ** 2 * s2 * (cws - p.defocus) ** 2
-            + 2 * np.pi ** 2 * p.johnson_std ** 2 * s2 + 0.25 * p.B * s2)
-    c = 2.0 * np.exp(-expo) * np.sin(gamma - p.amp_contrast)
-    c[0, 0] = 0.0
-    return c
+    C = W // 2 + 1
+    pix = float(pixel_size)
+    out = vd.Buffer((H, C), vd.complex64)
+
+    @vd.shader(exec_size=H * C)
+    def ctf_shader(buff: vc.Buff[vc.c64]):
+        ind = vc.global_invocation_id().x.to_dtype(vc.i32).to_register()
+        row = (ind // C).to_register()
+        pos = vc.new_vec2_register()
+        pos.x = (ind % C).to_dtype(vc.f32)
+        pos.y = row.to_dtype(vc.f32)
+        with vc.if_block(row > H // 2):
+            pos.y = (row - H).to_dtype(vc.f32)
+        buff[ind] = ctf_filter((H, C), pos, params, pix, static_params=params)
+
+    ctf_shader(out)
+    return out.read(0).reshape(H, C).astype(np.complex128)
 
 
 def prefilter_micrograph(data: np.ndarray, weights: RadialWeights, ctf_params: CTFParams, defoci, pixel_size: float):
@@ -81,8 +74,8 @@ def prefilter_micrograph(data: np.ndarray, weights: RadialWeights, ctf_params: C
         p = CTFParams.from_arg_list(*[getattr(ctf_params, f.name) for f in dataclasses.fields(ctf_params)])
         p.defocus = float(d)
         C = ctf_rfft((H, W), pixel_size, p)
-        g[i] = np.fft.irfft2(Y * w * C, s=(H, W))          # C is real here, so conj(C) = C
-        nw[i] = w * C * C
+        g[i] = np.fft.irfft2(Y * w * np.conj(C), s=(H, W))
+        nw[i] = w * np.abs(C) ** 2
     return g, nw
 
 

@@ -8,7 +8,7 @@ import numpy as np
 from ..plan import Comparator
 from ..weights import RadialWeights, edge_mask   # edge_mask: one definition, in weights.py
 from .fused_conv import FusedNormState, make_fused_norm_convolution_shader
-from ..ctf.ctf import image_ctf_value
+from ..ctf.ctf import ctf_filter
 
 @vd.map
 def crop_mapping(in_buff: Buff[f32], sum_buffer: Buff[vc.v3], micrograph_shape: Const[vc.iv2], template_width: Const[vc.i32]):
@@ -177,7 +177,8 @@ def lag_window_weights(weights, shape, template_shape, grid):
 def comparator_radial_table(weights: RadialWeights, shape) -> RadialWeights:
     """The RadialWeights the fused comparator actually uses for an (M, H, W) or (H, W) shape: `weights` resampled
     (linear in s, last value held) onto the comparator's fixed table of 2 samples per Fourier-pixel spacing out to the
-    corner of Fourier space, in float32. tm2d.prefilter uses it so that a prefiltered image matches the full search's w."""
+    corner of Fourier space, in float32. tm2d.prefilter uses it so that a prefiltered image matches the full
+    search's w."""
     H, W = (int(n) for n in tuple(shape)[-2:])
     M = int(shape[0]) if len(tuple(shape)) == 3 else 1
     table_size = int(2 * (max(H, W) // 2 + 1) * np.sqrt(2)) + 2
@@ -218,7 +219,16 @@ class ComparatorCrossCorrelation(Comparator):
           ||t||_w is summed inside the fused column pass on the full grid, at no extra FFT; the 1 / ||t||_w factor
           is applied by the results stage (self.score_norms, 1 / sqrt(score_norms * score_norm_inv_n)).
       "lag_grid": any 2-D w (array on the rfft2 half-plane); ||t||_w from an extra FFT on a small lag grid
-          (lag_window_weights), applied before the inverse FFT."""
+          (lag_window_weights), applied before the inverse FFT.
+      None (default): "fused", or "lag_grid" if prefiltered.
+
+    Image-side CTF (Plan(ctf_side="image"), the default for the built-in templates): the templates are CTF-free
+    projections and compare_template(..., image_ctf=...) applies each CTF C_d on the micrograph's own (H, W) grid,
+    X_d(u) = sum_s conj(T) conj(C_d) Y w e^{i 2 pi s.u} / N / ||c_d * t||_w (see compare_template). Fused norms only.
+
+    prefiltered=True: the micrographs are crops of an image that is already whitened and CTF-filtered
+    (tm2d.prefilter.prefilter_micrograph), compared with CTF-free projections; set_data then applies no weights and
+    takes the lag-grid norm weights from norm_lag_weights. Implies norm_method="lag_grid"."""
 
     def __init__(self, shape: tuple, template_shape: tuple, norm_method: str = None, prefiltered: bool = False):
         assert len(shape) == 3, "Shape must be a 3D tuple (N, H, W) but got: {}".format(shape)
@@ -227,7 +237,8 @@ class ComparatorCrossCorrelation(Comparator):
         if norm_method not in ("fused", "lag_grid"):
             raise ValueError(f"norm_method must be 'fused' or 'lag_grid', not {norm_method!r}")
         if prefiltered and norm_method != "lag_grid":
-            raise ValueError("prefiltered data needs norm_method='lag_grid' (the norm weights come from the full image)")
+            raise ValueError("prefiltered data needs norm_method='lag_grid' (the norm weights come from the full "
+                             "image)")
         self.norm_method = norm_method
         self.prefiltered = bool(prefiltered)
         if int(shape[2]) % 2:
@@ -328,7 +339,8 @@ class ComparatorCrossCorrelation(Comparator):
             self.weights = None
             self.lag_weights_buffer.write(np.broadcast_to(A, (M_, Gh, Gw // 2 + 1)).astype(np.float32))
             D = np.fft.rfft2(np.asarray(data, dtype=np.float64))
-            self.micrographs_buffer.write_fourier(np.ascontiguousarray(D.transpose(0, 2, 1)).reshape(M_, H_, W_ // 2 + 1).astype(np.complex64))
+            D = np.ascontiguousarray(D.transpose(0, 2, 1)).reshape(M_, H_, W_ // 2 + 1)    # transposed, as below
+            self.micrographs_buffer.write_fourier(D.astype(np.complex64))
             return
         if self.norm_method == "lag_grid":
             self._write_weights(weights)
@@ -361,8 +373,9 @@ class ComparatorCrossCorrelation(Comparator):
         """trim_to_valid (Plan sets it when the results exclude edge positions and no output_radius is given):
         compute only the rows / columns that hold valid positions (valid_trim_radius); the others are left stale.
 
-        image_ctf (Plan sets it with ctf_side="image"): an object with .ctf_params (CTFParams), .count (D, CTFs per
-        batch), .pixel_size (float or graph variable) and .args (ctf_params.get_args(cmd_graph, D)). The templates are
+        image_ctf (Plan sets it with ctf_side="image"): an object with .ctf_params (the plan's CTFParams; its fixed
+        fields are folded into ctf_filter's code), .count (D, CTFs per batch), .pixel_size (float or graph variable),
+        .args (ctf_params.get_args(cmd_graph, D)) and .kernels_per_pass (int or None). The templates are
         then CTF-free projections, and each of the D CTFs C_d is applied on the micrograph's own Fourier grid:
 
             X_d(u) = sum_s conj(T(s)) conj(C_d(s)) Y(s) w(s) e^{i 2 pi s.u} / N / ||c_d * t||_w,
@@ -530,7 +543,10 @@ class ComparatorCrossCorrelation(Comparator):
                     if state.cache is None or kidx in state.compute_kernels:
                         pix = ctf_rest[0]
                         params_d = image_ctf.ctf_params.assemble_params_list_from_args(list(ctf_rest[1:]), D)[d]
-                        ctf = image_ctf_value(H, W, ky, col, pix, params_d, getattr(image_ctf, "static_params", None))
+                        pos = vc.new_vec2_register()
+                        pos.x = col.to_dtype(f32)
+                        pos.y = ky
+                        ctf = ctf_filter((H, C), pos, params_d, pix, static_params=image_ctf.ctf_params)
                         if state.cache is not None:
                             state.cache[op.register_id][:] = ctf
                     else:

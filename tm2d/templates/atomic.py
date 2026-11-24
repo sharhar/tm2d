@@ -297,6 +297,7 @@ def separate_strided_convolution(template_buffer: vd.Buffer, pixel_size, ctf_par
     vd.fft.ifft(template_buffer, axis=1, normalize=False)
 
 class TemplateAtomic(Template):
+    supports_ctf_free = True
     shape: Tuple[int, int]
     atomic_coords: np.ndarray
     atomic_coords_buffer: vd.Buffer
@@ -329,8 +330,10 @@ class TemplateAtomic(Template):
                       pixel_size: float,
                       ctf_params: CTFParams,
                       template_count: int,
-                      cmd_graph: vd.CommandGraph) -> vd.RFFTBuffer:
+                      cmd_graph: vd.CommandGraph,
+                      apply_ctf: bool = True) -> vd.RFFTBuffer:
 
+        disable_ctf = self.disable_ctf or not apply_ctf
         template_buffer = vd.RFFTBuffer((template_count, *self.shape))
 
         # a list = one rotation per slot (one projection each); a single rotation = shared by all slots (one
@@ -362,9 +365,9 @@ class TemplateAtomic(Template):
             if not shared:
                 raise NotImplementedError("fuse_ctf_convolution applies K CTFs to one shared projection; with one "
                                           "rotation per slot use the default separate path (fuse_ctf_convolution=False)")
-            fused_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, self.disable_ctf)
+            fused_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, disable_ctf)
         else:
-            separate_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, self.disable_ctf,
+            separate_strided_convolution(template_buffer, pixel_size, ctf_params, template_count, ctf_args, disable_ctf,
                                          shared=shared)
 
         vd.fft.irfft(template_buffer, normalize=False)

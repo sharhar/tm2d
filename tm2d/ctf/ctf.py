@@ -1,5 +1,6 @@
 import vkdispatch.codegen as vc
 
+import dataclasses
 import math
 
 import numpy as np
@@ -60,114 +61,176 @@ def _zernike_cart(m: int, n: int, r: vc.ShaderVariable, th: vc.ShaderVariable) -
         return R * vc.cos(m * th)
     return R * vc.sin(abs(m) * th)
 
-def phase_from_even_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff: vc.ShaderVariable) -> vc.ShaderVariable:
-    psi = vc.new_float_register()
-    r = vc.sqrt(Sx_eff * Sx_eff + Sy_eff * Sy_eff).to_register()
-    th = vc.atan2(Sy_eff, Sx_eff).to_register()
-    for i in range(9):
-        with vc.if_block(params.get_even_coeff()[i] != 0.0):
-            m, n = _even_index_to_mn(i)
-            psi += params.get_even_coeff()[i] * _zernike_cart(m, n, r, th)
+def _is_num(x) -> bool:
+    """A field fixed at code-generation time (Python / NumPy number), as opposed to a shader variable."""
+    return isinstance(x, (int, float, np.integer, np.floating))
 
+
+def _is_zero(x) -> bool:
+    return _is_num(x) and float(x) == 0.0
+
+
+def _fn(x, py, sh):
+    """py(x) for a fixed value (folded into the generated code), sh(x) for a shader variable."""
+    return py(float(x)) if _is_num(x) else sh(x)
+
+
+def _sqrt(x):
+    return _fn(x, math.sqrt, vc.sqrt)
+
+
+def _sin(x):
+    return _fn(x, math.sin, vc.sin)
+
+
+def _cos(x):
+    return _fn(x, math.cos, vc.cos)
+
+
+def _sum(terms):
+    """Sum of the terms that are present (None = term not generated); None if none is."""
+    terms = [t for t in terms if t is not None]
+    if not terms:
+        return None
+    out = terms[0]
+    for t in terms[1:]:
+        out = out + t
+    return out
+
+
+def fold_ctf_params(params: CTFParams, static_params: CTFParams = None) -> CTFParams:
+    """params with every field that is fixed (not None) in static_params replaced by its Python float, so that
+    ctf_filter folds it into the generated code. static_params is the plan's CTFParams (None = searched field)."""
+    if static_params is None:
+        return params
+    out = CTFParams.from_arg_list(*[getattr(params, f.name) for f in dataclasses.fields(params)])
+    for f in dataclasses.fields(static_params):
+        v = getattr(static_params, f.name)
+        if v is not None:
+            setattr(out, f.name, float(v))
+    return out
+
+
+def _zernike_phase(coeffs, index_to_mn, Sx, Sy):
+    """sum_i c_i Z_i(r, theta) over the coefficients that can be nonzero (a fixed zero generates no code; a searched
+    one is guarded by an if on its value); None if all are fixed at zero."""
+    if all(_is_zero(c) for c in coeffs):
+        return None
+    psi = vc.new_float_register()
+    r = vc.sqrt(Sx * Sx + Sy * Sy).to_register()
+    th = vc.atan2(Sy, Sx).to_register()
+    for i, c in enumerate(coeffs):
+        if _is_zero(c):
+            continue
+        m, n = index_to_mn(i)
+        if _is_num(c):
+            psi += float(c) * _zernike_cart(m, n, r, th)
+        else:
+            with vc.if_block(c != 0.0):
+                psi += c * _zernike_cart(m, n, r, th)
     return psi
 
-def phase_from_odd_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff: vc.ShaderVariable) -> vc.ShaderVariable:
-    psi = vc.new_float_register()
-    r = vc.sqrt(Sx_eff * Sx_eff + Sy_eff * Sy_eff).to_register()
-    th = vc.atan2(Sy_eff, Sx_eff).to_register()
-    for i in range(6):
-        with vc.if_block(params.get_odd_coeff()[i] != 0.0):
-            m, n = _odd_index_to_mn(i)
-            psi += params.get_odd_coeff()[i] * _zernike_cart(m, n, r, th)
 
-    return psi # [rad]
+def phase_from_even_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff: vc.ShaderVariable):
+    return _zernike_phase(params.get_even_coeff(), _even_index_to_mn, Sx_eff, Sy_eff)
+
+
+def phase_from_odd_zernike(params: CTFParams, Sx_eff: vc.ShaderVariable, Sy_eff: vc.ShaderVariable):
+    return _zernike_phase(params.get_odd_coeff(), _odd_index_to_mn, Sx_eff, Sy_eff)  # [rad]
+
 
 def ctf_filter(
         buffer_shape: tuple[int, int],
         pos_2d: vc.ShaderVariable,
         params: CTFParams,
         pixel_size: float,
-        disable_B_factor: bool = False):
+        disable_B_factor: bool = False,
+        static_params: CTFParams = None):
+    """2 * CTF (complex if there are odd aberrations) at rfft2 bin pos_2d = (column kx, signed row ky) of an image
+    whose rfft2 half-plane is buffer_shape = (H, W // 2 + 1): s = (kx / (W pix), ky / (H pix)); 0 at DC.
+
+    The one CTF implementation of tm2d: templates (apply_ctfs_to_rfft_signals), the image-side CTF of
+    ComparatorCrossCorrelation and tm2d.prefilter.ctf_rfft all generate it here. Each field of params is either a
+    shader variable or a Python number; static_params (the plan's CTFParams, None = searched) turns every field fixed
+    there into a Python number (fold_ctf_params). Fixed fields are folded into the generated code, and terms fixed at
+    zero or identity (phase plates, Zernike terms, magnification distortion, astigmatism, envelopes) generate no code,
+    so the usual case costs one sin and one exp per value. Astigmatism uses
+    cos 2(theta - A_ang) = ((sx^2 - sy^2) cos 2A + 2 sx sy sin 2A) / s^2 (no atan2); the four envelopes are one exp."""
     vc.comment("Calculating CTF")
-    gamma_lorentz = 1 + params.HT/E_MASS
-    beta = vc.sqrt(1 - 1/(gamma_lorentz*gamma_lorentz))
+    p = fold_ctf_params(params, static_params)
 
-    epsilon = gamma_lorentz/(1 + params.HT/(2*E_MASS))
+    gamma_lorentz = 1 + p.HT / E_MASS
+    beta = _sqrt(1 - 1 / (gamma_lorentz * gamma_lorentz))
+    epsilon = gamma_lorentz / (1 + p.HT / (2 * E_MASS))
+    wlen = E_COMPTON / (gamma_lorentz * beta)  # wavelength in Angstroms
+    wlen_2 = wlen * wlen
 
-    temp1 = epsilon*params.energy_spread_fwhm/( params.HT * (2 * np.sqrt(2 * np.log(2))) )
-    temp2 = epsilon*params.accel_voltage_std
+    H, W = int(buffer_shape[0]), int(buffer_shape[1]) * 2 - 2
+    # pos_2d.x: rfft column index kx -> s_x = kx / (W pix); pos_2d.y: signed row index ky -> s_y = ky / (H pix)
+    Sx_raw = (pos_2d.x / (W * pixel_size)).to_register()
+    Sy_raw = (pos_2d.y / (H * pixel_size)).to_register()
+    identity = all(_is_num(getattr(p, f)) and float(getattr(p, f)) == v
+                   for f, v in (("mag_00", 1.0), ("mag_01", 0.0), ("mag_10", 0.0), ("mag_11", 1.0)))
+    if identity:
+        Sx, Sy = Sx_raw, Sy_raw
+    else:
+        Sx = (p.mag_00 * Sx_raw + p.mag_01 * Sy_raw).to_register()
+        Sy = (p.mag_10 * Sx_raw + p.mag_11 * Sy_raw).to_register()
 
-    wlen = E_COMPTON / (gamma_lorentz * beta) # wavelength in Angstroms
+    psi_even = phase_from_even_zernike(p, Sx, Sy)
+    psi_odd = phase_from_odd_zernike(p, Sx, Sy)
 
-    sigma_f = params.Cc*vc.sqrt(temp1*temp1 + temp2*temp2 + 4*params.OL_current_std*params.OL_current_std)
+    Sr_2 = (Sx * Sx + Sy * Sy).to_register()
+    CWS = (p.Cs * wlen_2 * Sr_2).to_register()
+    defocus = p.defocus
+    phase_df = (CWS * 0.5 - defocus).to_register()
+    if not _is_zero(p.A_mag):
+        # - A cos(2 (atan2(Sy, Sx) + pi/2 - A_ang)) = + A cos(2 (theta - A_ang)), theta = atan2(Sy, Sx)
+        a2 = (np.pi / 180 * 2) * p.A_ang
+        inv_s2 = vc.new_float_register(0.0)
+        with vc.if_block(Sr_2 > 0.0):
+            inv_s2[:] = 1.0 / Sr_2
+        cos2 = (((Sx * Sx - Sy * Sy) * _cos(a2) + 2.0 * Sx * Sy * _sin(a2)) * inv_s2).to_register()
+        phase_df[:] = phase_df + p.A_mag * cos2
+    gamma = (np.pi * wlen * Sr_2 * phase_df).to_register()
 
-    Cs = params.Cs # [A]
-    sigma_beta = params.beam_semiangle # [rad]
-    johnson_std = params.johnson_std # [A]
-    amp_contrast = params.amp_contrast # [dimensionless]
-    zernike = params.zernike # [deg]
-    lpp = params.lpp # [deg]
-    NA = params.NA # [dimensionless]
-    f_OL = params.f_OL # [A]
-    lpp_rot = params.lpp_rot # [deg]
-
-    lpp_rot_rad = np.pi / 180 * lpp_rot # [rad]
-    A2_mag = params.A_mag # [A]
-    A2_ang = params.A_ang # [deg]
-    A2_ang_rad = np.pi / 180 * A2_ang # [rad]
-
-    wave_shape = vc.new_uvec2_register()
-    wave_shape.x = buffer_shape[0]
-    wave_shape.y = buffer_shape[1] * 2 - 2
-
-    # pos_2d.x is the rfft column index kx -> s_x = kx / (W pix); pos_2d.y is the signed row index ky -> s_y = ky / (H pix)
-    # (wave_shape.x = H rows, wave_shape.y = W columns)
-    Sx_raw = (pos_2d.x/(wave_shape.y * pixel_size)).to_register()
-    Sy_raw = (pos_2d.y/(wave_shape.x * pixel_size)).to_register()
-
-    Sx = (params.mag_00 * Sx_raw + params.mag_01 * Sy_raw).to_register()
-    Sy = (params.mag_10 * Sx_raw + params.mag_11 * Sy_raw).to_register()
-
-    psi_even = phase_from_even_zernike(params, Sx, Sy)
-    psi_odd = phase_from_odd_zernike(params, Sx, Sy)
-
-    Sr_2 = (Sx*Sx + Sy*Sy).to_register()
-    Sa = (vc.atan2(Sy, Sx) + np.pi/2).to_register()
-
-    wlen_2 = wlen*wlen
-
-    CWS = Cs*wlen_2*Sr_2.to_register()
-
-    defocus = params.defocus
-
-    gamma = np.pi*wlen*Sr_2*((CWS*0.5) - defocus - A2_mag*vc.cos(2*(Sa - A2_ang_rad))).to_register()
-
-    # zernike phase plate
-    eta_z = -np.pi / 180 * zernike
-
+    # Zernike phase plate
+    eta_z = None if _is_zero(p.zernike) else -np.pi / 180 * p.zernike
     # laser phase plate
-    Dx = f_OL * wlen * (Sy * vc.cos(lpp_rot_rad) + Sx * vc.sin(lpp_rot_rad)) # bfp spatial x coord [A]
-    Dy = f_OL * wlen * (-Sy * vc.sin(lpp_rot_rad) + Sx * vc.cos(lpp_rot_rad)) # bfp spatial y coord [A]
-    w0 = 1.064e4 / (np.pi * NA) # beam waist radius [A]
-    zR = w0 / NA # rayleigh range [A]
-    w = w0 * vc.sqrt(1 + (Dx / zR)*(Dx / zR)) # waist at Dx [A]
-    k = 2 * np.pi / 1.064e4 # wave number [1/A]
-    eta_l = (np.pi / 180 * lpp) * (0.5 * (w0 / w) * vc.exp(-2 * Dy*Dy / (w*w)) * (1 + vc.cos(2 * k * Dx)) - 1) # [rad]
+    eta_l = None
+    if not _is_zero(p.lpp):
+        lpp_rot_rad = np.pi / 180 * p.lpp_rot  # [rad]
+        Dx = p.f_OL * wlen * (Sy * _cos(lpp_rot_rad) + Sx * _sin(lpp_rot_rad))  # bfp spatial x coord [A]
+        Dy = p.f_OL * wlen * (-Sy * _sin(lpp_rot_rad) + Sx * _cos(lpp_rot_rad))  # bfp spatial y coord [A]
+        w0 = 1.064e4 / (np.pi * p.NA)  # beam waist radius [A]
+        zR = w0 / p.NA  # rayleigh range [A]
+        w = w0 * vc.sqrt(1 + (Dx / zR) * (Dx / zR))  # waist at Dx [A]
+        k = 2 * np.pi / 1.064e4  # wave number [1/A]
+        eta_l = (np.pi / 180 * p.lpp) * (0.5 * (w0 / w) * vc.exp(-2 * Dy * Dy / (w * w)) * (1 + vc.cos(2 * k * Dx)) - 1)
 
-    # total phase plate phase
-    eta = eta_z + eta_l
+    sinchi = vc.sin(_sum([psi_even, eta_z, eta_l, gamma]) - p.amp_contrast).to_register()
 
-    sinchi = vc.sin(psi_even + eta + gamma - amp_contrast).to_register()
-    E_TC = vc.exp(-0.5 * sigma_f * sigma_f * np.pi * np.pi * wlen_2 * Sr_2 * Sr_2).to_register()
-    E_SC = vc.exp(-2 * sigma_beta * sigma_beta * np.pi * np.pi * Sr_2 * (CWS - defocus)*(CWS - defocus)).to_register()
-    E_JN = vc.exp(-2 * np.pi * np.pi * johnson_std*johnson_std * Sr_2).to_register()
-    E_BF = vc.exp(-0.25 * params.B * Sr_2).to_register() if not disable_B_factor else 1.0
+    # envelopes: temporal coherence, spatial coherence, Johnson noise, B factor, as one exp
+    temp1 = epsilon * p.energy_spread_fwhm / (p.HT * (2 * np.sqrt(2 * np.log(2))))
+    temp2 = epsilon * p.accel_voltage_std
+    sigma_f = p.Cc * _sqrt(temp1 * temp1 + temp2 * temp2 + 4 * p.OL_current_std * p.OL_current_std)
+    expo = _sum([
+        None if _is_zero(sigma_f) else 0.5 * sigma_f * sigma_f * np.pi * np.pi * wlen_2 * Sr_2 * Sr_2,
+        None if _is_zero(p.beam_semiangle) else
+        2 * p.beam_semiangle * p.beam_semiangle * np.pi * np.pi * Sr_2 * (CWS - defocus) * (CWS - defocus),
+        None if _is_zero(p.johnson_std) else 2 * np.pi * np.pi * p.johnson_std * p.johnson_std * Sr_2,
+        None if (disable_B_factor or _is_zero(p.B)) else 0.25 * p.B * Sr_2,
+    ])
+    CTF_scale = (2.0 * sinchi if expo is None else 2.0 * vc.exp(-expo) * sinchi).to_register()  # 2 * ctf
 
-    CTF_scale = (2 * E_TC * E_SC * E_JN * E_BF * sinchi).to_register() # technically 2 * ctf
-
-    CTF = vc.complex_from_euler_angle(psi_odd).to_register()
-    CTF.real *= CTF_scale
-    CTF.imag *= CTF_scale
+    if psi_odd is None:
+        CTF = vc.new_complex64_register()
+        CTF.real = CTF_scale
+        CTF.imag = 0.0
+    else:
+        CTF = vc.complex_from_euler_angle(psi_odd).to_register()
+        CTF.real *= CTF_scale
+        CTF.imag *= CTF_scale
 
     with vc.if_block(vc.all(Sx == 0.0, Sy == 0.0)):
         CTF.real = 0.0
@@ -199,96 +262,11 @@ def apply_ctfs_to_rfft_signals(
     ctf_param_list = ctf_params.assemble_params_list_from_args(args, signal_shape[0])
 
     for i in range(len(registers)):
-        #index = ind + i * signal_shape[1] * signal_shape[2]
-
+        # ctf_params (the plan's, None = searched): its fixed fields are folded into the generated code
         registers[i][:] = vc.mult_complex(input_value, ctf_filter(
             signal_shape[1:],
             pos_2d,
             ctf_param_list[indices[i]],
-            pix_size
+            pix_size,
+            static_params=ctf_params
         ))
-
-def _is_static_zero(v) -> bool:
-    return v is not None and not isinstance(v, vc.ShaderVariable) and float(v) == 0.0
-
-
-def image_ctf_fast_ok(static_params: CTFParams) -> bool:
-    """Whether image_ctf_value can use the slim formula: no phase plates, Zernike terms or magnification distortion,
-    each fixed (not searched) at zero / identity in the plan's CTFParams (None = searched)."""
-    p = static_params
-    zero = ["zernike", "lpp"] + [f"e_zern_{i}" for i in range(9)] + [f"o_zern_{i}" for i in range(6)] + ["mag_01", "mag_10"]
-    if not all(_is_static_zero(getattr(p, f)) for f in zero):
-        return False
-    return all(getattr(p, f) is not None and float(getattr(p, f)) == 1.0 for f in ("mag_00", "mag_11"))
-
-
-def _mixed(static_value, var):
-    """A field's value for code generation: the Python float if fixed in the plan's CTFParams, else the shader
-    variable (searched field)."""
-    return float(static_value) if static_value is not None else var
-
-
-def _f(x, py, sh):
-    return py(x) if isinstance(x, (int, float)) else sh(x)
-
-
-def image_ctf_value(H: int, W: int, row_signed: vc.ShaderVariable, col: vc.ShaderVariable,
-                    pixel_size, params: CTFParams, static_params: CTFParams = None) -> vc.ShaderVariable:
-    """The CTF (ctf_filter's 2 * CTF, complex if there are odd aberrations) at rfft2 bin (signed row ky, column kx)
-    of an (H, W) micrograph: s = (kx / (W pix), ky / (H pix)). Used by the image-side CTF path of
-    ComparatorCrossCorrelation, which evaluates it per Fourier pixel of the micrograph for every kernel.
-
-    static_params: the plan's CTFParams (None fields = searched). If image_ctf_fast_ok(static_params), the same
-    formula as ctf_filter is generated with the zero terms removed and the fixed fields folded in as Python
-    constants: astigmatism from cos 2(theta - A_ang) = ((sx^2 - sy^2) cos 2A + 2 sx sy sin 2A) / s^2 (no atan2), and the
-    four envelopes as one exp, i.e. one sin and one exp per value. Otherwise the general ctf_filter."""
-    pos_2d = vc.new_vec2_register()
-    pos_2d.x = col.to_dtype(vc.f32)
-    pos_2d.y = row_signed.to_dtype(vc.f32)
-    if static_params is None or not image_ctf_fast_ok(static_params):
-        return ctf_filter((H, W // 2 + 1), pos_2d, params, pixel_size)
-
-    sp = static_params
-    g = {f: _mixed(getattr(sp, f), getattr(params, f)) for f in (
-        "HT", "Cs", "Cc", "energy_spread_fwhm", "accel_voltage_std", "OL_current_std", "beam_semiangle",
-        "johnson_std", "B", "amp_contrast", "defocus", "A_mag", "A_ang")}
-    sqrt = lambda x: _f(x, math.sqrt, vc.sqrt)
-    HT = g["HT"]
-    gamma_lorentz = 1 + HT / E_MASS
-    beta = sqrt(1 - 1 / (gamma_lorentz * gamma_lorentz))
-    epsilon = gamma_lorentz / (1 + HT / (2 * E_MASS))
-    temp1 = epsilon * g["energy_spread_fwhm"] / (HT * (2 * np.sqrt(2 * np.log(2))))
-    temp2 = epsilon * g["accel_voltage_std"]
-    wlen = E_COMPTON / (gamma_lorentz * beta)
-    sigma_f = g["Cc"] * sqrt(temp1 * temp1 + temp2 * temp2 + 4 * g["OL_current_std"] * g["OL_current_std"])
-    wlen_2 = wlen * wlen
-
-    Sx = (pos_2d.x / (W * pixel_size)).to_register()
-    Sy = (pos_2d.y / (H * pixel_size)).to_register()
-    Sr_2 = (Sx * Sx + Sy * Sy).to_register()
-    CWS = (g["Cs"] * wlen_2 * Sr_2).to_register()
-    defocus = g["defocus"]
-    phase_df = (CWS * 0.5 - defocus).to_register()
-    if not _is_static_zero(g["A_mag"]):
-        # ctf_filter: - A cos(2 (atan2(Sy, Sx) + pi/2 - A_ang)) = + A cos(2 (theta - A_ang))
-        a2 = np.pi / 180 * 2 * g["A_ang"]
-        cos2a = _f(a2, math.cos, vc.cos)
-        sin2a = _f(a2, math.sin, vc.sin)
-        inv_s2 = vc.new_float_register(0.0)
-        with vc.if_block(Sr_2 > 0.0):
-            inv_s2[:] = 1.0 / Sr_2
-        cos2 = (((Sx * Sx - Sy * Sy) * cos2a + 2.0 * Sx * Sy * sin2a) * inv_s2).to_register()
-        phase_df[:] = phase_df + g["A_mag"] * cos2
-    gamma = (np.pi * wlen * Sr_2 * phase_df).to_register()
-    sinchi = vc.sin(gamma - g["amp_contrast"]).to_register()
-    cw_df = (CWS - defocus).to_register()
-    expo = (0.5 * sigma_f * sigma_f * np.pi * np.pi * wlen_2 * Sr_2 * Sr_2
-            + 2 * g["beam_semiangle"] * g["beam_semiangle"] * np.pi * np.pi * Sr_2 * cw_df * cw_df
-            + 2 * np.pi * np.pi * g["johnson_std"] * g["johnson_std"] * Sr_2
-            + 0.25 * g["B"] * Sr_2).to_register()
-    ctf = vc.new_complex64_register()
-    ctf.real = 2.0 * vc.exp(-expo) * sinchi
-    ctf.imag = 0.0
-    with vc.if_block(Sr_2 == 0.0):
-        ctf.real = 0.0
-    return ctf

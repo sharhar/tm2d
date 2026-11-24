@@ -25,6 +25,13 @@ def per_slot_rotations(rotations, template_count: int) -> list:
     return [rotations] * template_count
 
 class Template:
+    """Base class of tm2d templates. A subclass implements _make_template, _get_rotation_matrices and get_shape.
+
+    supports_ctf_free: True if _make_template takes apply_ctf=False and then renders projections without the CTF
+    (the image-side CTF and prefiltered searches need them). A subclass that sets it must honour the flag; Plan
+    never uses the image side for a template without it."""
+    supports_ctf_free: bool = False
+
     def __init__(self):
         raise NotImplementedError("Template is an abstract class. Please implement it in a subclass.")
 
@@ -34,7 +41,7 @@ class Template:
                       ctf_params: CTFParams,
                       template_count: int = 1,
                       cmd_graph: vd.CommandGraph = None,
-                      disable_ctf: bool = False) -> vd.RFFTBuffer:
+                      apply_ctf: bool = True) -> vd.RFFTBuffer:
         """
         This abstract method should return a buffer containing the sampled and filtered template in real space.
         """
@@ -46,10 +53,16 @@ class Template:
                       pixel_size: float,
                       ctf_params: CTFParams = None,
                       template_count: int = 1,
-                      cmd_graph: vd.CommandGraph = None) -> vd.RFFTBuffer:
+                      cmd_graph: vd.CommandGraph = None,
+                      apply_ctf: bool = True) -> vd.RFFTBuffer:
+        """Record the rendering of template_count templates (real space, (template_count, h, w) RFFTBuffer).
+
+        apply_ctf=False: projections without the CTF (other filters, e.g. the atomic template's Gaussian, still
+        apply). Only for templates with supports_ctf_free; the template's own disable_ctf setting is not changed.
         """
-        This abstract method should return a buffer containing the sampled and filtered template in real space.
-        """
+        if not apply_ctf and not self.supports_ctf_free:
+            raise NotImplementedError(f"{type(self).__name__} cannot render CTF-free projections "
+                                      "(supports_ctf_free is False)")
 
         if ctf_params is None:
             ctf_params = CTFParams()
@@ -75,7 +88,8 @@ class Template:
             pixel_size=pixel_size,
             ctf_params=ctf_params,
             template_count=template_count,
-            cmd_graph=cmd_graph
+            cmd_graph=cmd_graph,
+            **({} if apply_ctf else {"apply_ctf": False})   # subclasses without the flag keep working
         )
 
     def _get_rotation_matrices(self, rotations: np.ndarray) -> np.ndarray:

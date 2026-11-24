@@ -221,6 +221,7 @@ def extract_fft_slices(
     )
 
 class TemplateDensity(Template):
+    supports_ctf_free = True
     shape: Tuple[int, int]
     density_array: np.ndarray
     density_pixel_size: float
@@ -274,7 +275,8 @@ class TemplateDensity(Template):
                     pixel_size: float,
                     ctf_params: CTFParams,
                     template_count: int,
-                    cmd_graph: vd.CommandGraph) -> vd.RFFTBuffer:
+                    cmd_graph: vd.CommandGraph,
+                    apply_ctf: bool = True) -> vd.RFFTBuffer:
 
         template_buffer_temp = vd.RFFTBuffer((template_count, *self.shape))
 
@@ -291,7 +293,7 @@ class TemplateDensity(Template):
             self.density_pixel_size,
             float(self.density_padding_factor),
             ctf_params,
-            self.disable_ctf,
+            self.disable_ctf or not apply_ctf,
             cmd_graph
         )
 
